@@ -25,6 +25,18 @@ class IronicSwitchPort(model_base.BASEV2):
             'port': self.port
         }
 
+class IronicSwitchType(object):
+
+    cisco = 'cisco'
+    arista = 'arista'
+
+    @classmethod
+    def as_dict(cls):
+        return {
+            'cisco': cls.cisco,
+            'arista': cls.arista
+        }
+
 class IronicSwitch(model_base.BASEV2):
     """A physical switch and admin credentials."""
 
@@ -35,8 +47,10 @@ class IronicSwitch(model_base.BASEV2):
     ip = sa.Column(sa.String(255))
     username = sa.Column(sa.String(255))
     password = sa.Column(sa.String(255))
+
+    # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
-    ports = sa_orm.relationship('IronicSwitchPort')
+    switch_ports = sa_orm.relationship('IronicSwitchPort', backref='switch')
 
     def as_dict(self):
         return {
@@ -63,4 +77,19 @@ class IronicNetwork(model_base.BASEV2):
             "provider:segmentation_id": self.segmentation_id,
             "provider:network_type": self.network_type,
 
+        }
+
+class IronicPortBinding(model_base.BASEV2):
+    """Keep track of which networks are actually active on a given physical port."""
+
+    __tablename__ = "ironic_port_bindings"
+
+    # TODO(morgabra) This is confusing, neutron network_id is the primary key of the IronicNetwork model
+    network_id = sa.Column(sa.String(255), sa.ForeignKey('ironic_networks.network_id'), primary_key=True)
+    switch_port_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switch_ports.id'), primary_key=True)
+
+    def as_dict(self):
+        return {
+            "network_id": self.network_id,
+            "switch_port_id": self.switch_port_id
         }

@@ -36,55 +36,6 @@ EXEC_CONF_SNIPPET = """
       </config>
 """
 
-CMD_VLAN_CONF_SNIPPET = """
-            <vlan>
-              <vlan-id-create-delete>
-                <__XML__PARAM_value>%s</__XML__PARAM_value>
-                <__XML__MODE_vlan>
-                  <name>
-                    <vlan-name>%s</vlan-name>
-                  </name>
-                </__XML__MODE_vlan>
-              </vlan-id-create-delete>
-            </vlan>
-"""
-
-CMD_VLAN_ACTIVE_SNIPPET = """
-            <vlan>
-              <vlan-id-create-delete>
-                <__XML__PARAM_value>%s</__XML__PARAM_value>
-                <__XML__MODE_vlan>
-                  <state>
-                    <vstate>active</vstate>
-                  </state>
-                </__XML__MODE_vlan>
-              </vlan-id-create-delete>
-            </vlan>
-"""
-
-CMD_VLAN_NO_SHUTDOWN_SNIPPET = """
-            <vlan>
-              <vlan-id-create-delete>
-                <__XML__PARAM_value>%s</__XML__PARAM_value>
-                <__XML__MODE_vlan>
-                  <no>
-                    <shutdown/>
-                  </no>
-                </__XML__MODE_vlan>
-              </vlan-id-create-delete>
-            </vlan>
-"""
-
-CMD_NO_VLAN_CONF_SNIPPET = """
-          <no>
-          <vlan>
-            <vlan-id-create-delete>
-              <__XML__PARAM_value>%s</__XML__PARAM_value>
-            </vlan-id-create-delete>
-          </vlan>
-          </no>
-"""
-
 CMD_INT_VLAN_HEADER = """
           <interface>
             <ethernet>
@@ -119,37 +70,6 @@ CMD_INT_VLAN_SNIPPET = (CMD_INT_VLAN_HEADER +
 CMD_INT_VLAN_ADD_SNIPPET = (CMD_INT_VLAN_HEADER +
                             CMD_VLAN_ADD_ID +
                             CMD_INT_VLAN_TRAILER)
-
-CMD_PORT_TRUNK = """
-          <interface>
-            <ethernet>
-              <interface>%s</interface>
-              <__XML__MODE_if-ethernet-switch>
-                <switchport></switchport>
-                <switchport>
-                  <mode>
-                    <trunk>
-                    </trunk>
-                  </mode>
-                </switchport>
-              </__XML__MODE_if-ethernet-switch>
-            </ethernet>
-          </interface>
-"""
-
-CMD_NO_SWITCHPORT = """
-          <interface>
-            <ethernet>
-              <interface>%s</interface>
-              <__XML__MODE_if-ethernet-switch>
-                <no>
-                  <switchport>
-                  </switchport>
-                </no>
-              </__XML__MODE_if-ethernet-switch>
-            </ethernet>
-          </interface>
-"""
 
 CMD_NO_VLAN_INT_SNIPPET = """
           <interface>
