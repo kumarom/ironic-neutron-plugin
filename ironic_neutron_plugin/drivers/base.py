@@ -1,6 +1,9 @@
 from abc import ABCMeta, abstractmethod
 import six
 
+class DriverException(Exception):
+    pass
+
 @six.add_metaclass(ABCMeta)
 class Driver(object):
     """Define stable abstract interface for ironic neutron plugin hardware drivers."""
@@ -11,6 +14,6 @@ class Driver(object):
         pass
 
     @abstractmethod
-    def detatch(self, switch_port, vlanid):
+    def detach(self, switch_port, vlanid):
         """Remove a neutron port configuration on given physical switch ports."""
         pass

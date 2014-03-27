@@ -1,0 +1,159 @@
+The current driver implementation depends on the bundled 'ncconf' package, a netconf python lib. This package is modified to support the <exec-command> element and we use direct commands as opposed to the XML-based config management provided by vanilla netconf.
+
+This might be a bad idea, but it's much easier to manage.
+
+For future reference, listed below are some XML configuration snippets should we ever want to use the XML api.
+
+# TODO(morgabra) Need to get ahold of relevant documentation (XML schema, mostly) - it's behind an auth wall for cisco
+BASE_XML_CONFIG = """
+          <interface>
+            <port-channel>
+              <interface>%s</interface>
+              <__XML__MODE_if-ethernet-switch>
+                 <description>
+                   <desc_line>%s</desc_line>
+                </description>
+                <switchport>
+                  <mode>
+                    <trunk/>
+                  </mode>
+                </switchport>
+                <switchport>
+                  <trunk>
+                    <allowed>
+                      <vlan>
+                        <vlan_id>%s</vlan_id>
+                      </vlan>
+                    </allowed>
+                  </trunk>
+                </switchport>
+                <spanning-tree>
+                  <port>
+                    <type>
+                      <edge>
+                        <trunk>
+                        </trunk>
+                      </edge>
+                    </type>
+                  </port>
+                </spanning-tree>
+                <vpc>
+                  <vpc_id>%s</vpc_id>
+                </vpc>
+                <no>
+                  <shutdown/>
+                </no>
+              </__XML__MODE_if-ethernet-switch>
+            </port-channel>
+          </interface>
+          <interface>
+            <ethernet>
+              <interface>1/%s</interface>
+              <__XML__MODE_if-ethernet-switch>
+                 <description>
+                   <desc_line>%s</desc_line>
+                </description>
+                <switchport>
+                  <mode>
+                    <trunk/>
+                  </mode>
+                </switchport>
+                <switchport>
+                  <trunk>
+                    <allowed>
+                      <vlan>
+                        <vlan_id>%s</vlan_id>
+                      </vlan>
+                    </allowed>
+                  </trunk>
+                </switchport>
+                <spanning-tree>
+                  <port>
+                    <type>
+                      <edge>
+                        <trunk>
+                        </trunk>
+                      </edge>
+                    </type>
+                  </port>
+                </spanning-tree>
+                <no>
+                  <shutdown/>
+                </no>
+                <channel-group>
+                  <number>%s</number>  # TODO(morgabra) Figure out the correct tag
+                  <mode>
+                    <active/>
+                  </mode>
+                </channel-group>
+              </__XML__MODE_if-ethernet-switch>
+            </ethernet>
+          </interface>
+"""
+
+# The following are standard strings, messages used to communicate with Nexus.
+EXEC_CONF_SNIPPET = """
+      <config xmlns:xc="urn:ietf:params:xml:ns:netconf:base:1.0">
+        <configure>
+          <__XML__MODE__exec_configure>%s
+          </__XML__MODE__exec_configure>
+        </configure>
+      </config>
+"""
+
+CMD_INT_VLAN_HEADER = """
+          <interface>
+            <ethernet>
+              <interface>%s</interface>
+              <__XML__MODE_if-ethernet-switch>
+                <switchport>
+                  <trunk>
+                    <allowed>
+                      <vlan>"""
+
+CMD_VLAN_ID = """
+                          <vlan_id>%s</vlan_id>"""
+
+CMD_VLAN_ADD_ID = """
+                        <add>%s
+                        </add>""" % CMD_VLAN_ID
+
+CMD_INT_VLAN_TRAILER = """
+                      </vlan>
+                    </allowed>
+                  </trunk>
+                </switchport>
+              </__XML__MODE_if-ethernet-switch>
+            </ethernet>
+          </interface>
+"""
+
+CMD_INT_VLAN_SNIPPET = (CMD_INT_VLAN_HEADER +
+                        CMD_VLAN_ID +
+                        CMD_INT_VLAN_TRAILER)
+
+CMD_INT_VLAN_ADD_SNIPPET = (CMD_INT_VLAN_HEADER +
+                            CMD_VLAN_ADD_ID +
+                            CMD_INT_VLAN_TRAILER)
+
+CMD_INT_REMOVE_VLAN = """
+          <interface>
+            <ethernet>
+              <interface>%s</interface>
+              <__XML__MODE_if-ethernet-switch>
+                <switchport></switchport>
+                <switchport>
+                  <trunk>
+                    <allowed>
+                      <vlan>
+                        <remove>
+                          <vlan>%s</vlan>
+                        </remove>
+                      </vlan>
+                    </allowed>
+                  </trunk>
+                </switchport>
+              </__XML__MODE_if-ethernet-switch>
+            </ethernet>
+          </interface>
+"""

@@ -14,8 +14,8 @@ class IronicSwitchPort(model_base.BASEV2):
     id = sa.Column(sa.Integer, primary_key=True, autoincrement=True)
 
     switch_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switches.id'))
-    device_id = sa.Column(sa.String(255), index=True)  # <uuid> ironic chassis
-    port = sa.Column(sa.String(255))  # Ethernet1/1
+    device_id = sa.Column(sa.String(255), index=True)  # ironic chassis id
+    port = sa.Column(sa.String(255))  # switch port number: <1-n>
 
     def as_dict(self):
         return {
@@ -50,7 +50,7 @@ class IronicSwitch(model_base.BASEV2):
 
     # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
-    switch_ports = sa_orm.relationship('IronicSwitchPort', backref='switch')
+    switch_ports = sa_orm.relationship('IronicSwitchPort', cascade='all,delete', backref='switch')
 
     def as_dict(self):
         return {
@@ -80,16 +80,22 @@ class IronicNetwork(model_base.BASEV2):
         }
 
 class IronicPortBinding(model_base.BASEV2):
-    """Keep track of which networks are actually active on a given physical port."""
+    """Keep track of active switch configurations.
+
+    TODO(morgabra) This keeps switch config state in neutron. In general, if there is an entry here then
+    the configuration is running on the switch. There are many problems with this plan.
+
+    TODO(morgabra) Ideally we implement config validation and purge/sync utilities which should let us get
+    away without keeping any state?"""
 
     __tablename__ = "ironic_port_bindings"
 
-    # TODO(morgabra) This is confusing, neutron network_id is the primary key of the IronicNetwork model
-    network_id = sa.Column(sa.String(255), sa.ForeignKey('ironic_networks.network_id'), primary_key=True)
+    # TODO(morgabra) This is confusing, port_id is a neutron port
+    port_id = sa.Column(sa.String(255), primary_key=True)
     switch_port_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switch_ports.id'), primary_key=True)
 
     def as_dict(self):
         return {
-            "network_id": self.network_id,
+            "port_id": self.port_id,
             "switch_port_id": self.switch_port_id
         }

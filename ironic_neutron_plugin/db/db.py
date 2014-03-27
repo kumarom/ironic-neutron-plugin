@@ -7,12 +7,12 @@ from ironic_neutron_plugin.db import models
 
 LOG = logging.getLogger(__name__)
 
-def create_portbinding(network_id, switch_port_id):
+def create_portbinding(port_id, switch_port_id):
     session = db_api.get_session()
 
     with session.begin(subtransactions=True):
         portbinding = models.IronicPortBinding(
-                        network_id=network_id,
+                        port_id=port_id,
                         switch_port_id=switch_port_id)
         session.add(portbinding)
         return portbinding
@@ -23,12 +23,12 @@ def get_all_portbindings():
     return (session.query(models.IronicPortBinding).all())
 
 
-def get_portbinding(network_id, switch_port_id):
+def get_portbinding(port_id, switch_port_id):
     session = db_api.get_session()
 
     try:
         return (session.query(models.IronicPortBinding).
-                get(network_id=network_id, switch_port_id=switch_port_id))
+                get((port_id, switch_port_id)))
     except orm.exc.NoResultFound:
         return None
 
@@ -40,10 +40,10 @@ def filter_portbindings(**kwargs):
             filter_by(**kwargs))
 
 
-def delete_portbinding(network_id, switch_port_id):
+def delete_portbinding(port_id, switch_port_id):
     session = db_api.get_session()
 
-    portbinding = get_portbinding(network_id, switch_port_id)
+    portbinding = get_portbinding(port_id, switch_port_id)
 
     if not portbinding:
         return False  #TODO(morgabra) throw probably
@@ -134,7 +134,12 @@ def get_all_switches():
 
 def delete_switch(switch_id):
     session = db_api.get_session()
-    switch = session.query(models.IronicSwitch).get(switch_id)
+
+    switch = get_switch(switch_id)
+
+    if not switch:
+        return False  #TODO(morgabra) Throw probably
+
     session.delete(switch)
     session.flush()
     return True
@@ -161,3 +166,16 @@ def create_network(network_id, physical_network=None,
                     network_type=network_type)
         session.add(network)
         return network
+
+
+def delete_network(network_id):
+    session = db_api.get_session()
+
+    network = get_network(network_id)
+
+    if not network:
+        return False  #TODO(morgabra) Throw probably
+
+    session.delete(network)
+    session.flush()
+    return True

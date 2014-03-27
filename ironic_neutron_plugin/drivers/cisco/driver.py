@@ -21,13 +21,13 @@ This is lifted partially from the cisco ml2 mechanism.
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
-from ironic_neutron_plugin.drivers.cisco import nexus_snippets as snipp
+from ironic_neutron_plugin.drivers.cisco import commands
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.db import db
 
 LOG = logging.getLogger(__name__)
 
-class CiscoException(Exception):
+class CiscoException(base_driver.DriverException):
     pass
 
 class CiscoDriver(base_driver.Driver):
@@ -35,11 +35,77 @@ class CiscoDriver(base_driver.Driver):
     def __init__(self):
         self.ncclient = None
 
-    def attach(self, vlanid, switch_port):
-        self.enable_vlan_on_trunk_int(vlanid, switch_port)
+    def _get_vlan_id(self, neutron_port):
+        network_id = neutron_port['network_id']
+        network = db.get_network(network_id)
+        return network.segmentation_id
 
-    def detatch(self, vlanid, switch_port):
-        self.disable_vlan_on_trunk_int(vlanid, switch_port)
+    def _get_ip(self, neutron_port):
+        ips = neutron_port['fixed_ips']
+        if len(ips) != 1:
+            raise CiscoException('More than 1 IP assigned to port %s, bailing out.' % (neutron_port['id']))
+        return ips[0]['ip_address']
+
+    def _get_port_bindings(self, switch_port):
+        # get existing port bindings
+        return list(db.filter_portbindings(switch_port_id=switch_port['id']))
+
+    def attach(self, neutron_port, switch_port):
+
+        vlan_id = self._get_vlan_id(neutron_port)
+        ip = self._get_ip(neutron_port)
+
+        port_bindings = self._get_port_bindings(switch_port)
+
+        if not len(port_bindings):
+            LOG.debug('No existing bindings, creating new configuration')
+            self._run_commands(switch_port, commands.create_port(
+                device_id=switch_port['device_id'],
+                interface=switch_port['port'],
+                vlan_id=vlan_id,
+                ip=ip,
+                mac_address=neutron_port['mac_address']))
+        else:
+            LOG.debug('Existing bindings, adding vlan')
+            self._run_commands(switch_port, commands.add_vlan(
+                interface=switch_port['port'],
+                vlan_id=vlan_id,
+                ip=ip,
+                mac_address=neutron_port['mac_address']))
+
+    def detach(self, neutron_port, switch_port):
+        vlan_id = self._get_vlan_id(neutron_port)
+        ip = self._get_ip(neutron_port)
+
+        port_bindings = self._get_port_bindings(switch_port)
+
+        try:
+
+            if not len(port_bindings):
+                msg = 'No portbindings found for given port, doing nothing...'
+                LOG.error(msg)
+            elif len(port_bindings) == 1:
+                LOG.debug('Last binding for port, detaching and shutting down...')
+                # TODO(morgabra) We have to remove the vlan first to disable IPSG
+                self._run_commands(switch_port, commands.remove_vlan(
+                    interface=switch_port['port'],
+                    vlan_id=vlan_id,
+                    ip=ip,
+                    mac_address=neutron_port['mac_address']))
+                self._run_commands(switch_port, commands.shutdown_port(
+                    interface=switch_port['port']))
+            else:
+                LOG.debug('More than 1 binding for port, removing vlan only...')
+                self._run_commands(switch_port, commands.remove_vlan(
+                    interface=switch_port['port'],
+                    vlan_id=vlan_id,
+                    ip=ip,
+                    mac_address=neutron_port['mac_address']))
+
+        except CiscoException as e:
+            #TODO(morgabra) We can ignore some classes of errors, but not all
+            LOG.error("Failed detatch!")
+            LOG.error(e)
 
     def _import_ncclient(self):
         """Import the NETCONF client (ncclient) module.
@@ -52,11 +118,13 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
-    def _edit_config(self, switch_port, target='running', config=''):
+    def _run_commands(self, switch_port, commands):
 
         conn = self._connect(switch_port.switch)
         try:
-            conn.edit_config(target, config=config)
+            LOG.debug("Executing commands: %s" % (commands))
+
+            conn.command(commands)
         except Exception as e:
             raise CiscoException(e)
 
@@ -75,28 +143,3 @@ class CiscoDriver(base_driver.Driver):
                                          password=password)
         except Exception as e:
             raise CiscoException(e)
-
-    def create_xml_snippet(self, customized_config):
-        conf_xml_snippet = snipp.EXEC_CONF_SNIPPET % (customized_config)
-        return conf_xml_snippet
-
-    def enable_vlan_on_trunk_int(self, vlanid, switch_port):
-        """Enable a VLAN on a trunk interface."""
-
-        if len(list(db.filter_portbindings(switch_port_id=switch_port.id))) == 1:
-            snippet = snipp.CMD_INT_VLAN_SNIPPET
-        else:
-            snippet = snipp.CMD_INT_VLAN_ADD_SNIPPET
-
-        snippet = snipp.CMD_INT_VLAN_ADD_SNIPPET
-        confstr = snippet % (switch_port.port, vlanid)
-        confstr = self.create_xml_snippet(confstr)
-        LOG.debug("NexusDriver: %s", confstr)
-        self._edit_config(switch_port, target='running', config=confstr)
-
-    def disable_vlan_on_trunk_int(self, vlanid, switch_port):
-        """Disable a VLAN on a trunk interface."""
-        confstr = snipp.CMD_NO_VLAN_INT_SNIPPET % (switch_port.port, vlanid)
-        confstr = self.create_xml_snippet(confstr)
-        LOG.debug("NexusDriver: %s", confstr)
-        self._edit_config(switch_port, target='running', config=confstr)

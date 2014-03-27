@@ -31,7 +31,6 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
     def create_network(self, context, network):
         #TODO(morgabra) Validation
         #TODO(morgabra) Actually provision vlan or whatever
-        #TODO(morgabra) This should probably be a single transaction if doable?
 
         physical_network = network['network'].get('provider:physical_network')
         if not physical_network:
@@ -56,11 +55,11 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         return self._add_network_data(neutron_network, ironic_network)
 
     def delete_network(self, context, id):
-        #TODO(morgabra) Delete ironic network also
+        db.delete_network(id)
         return super(IronicPlugin, self).delete_network(context, id)
 
     def update_network(self, context, id, network):
-        return super(IronicPlugin, self).update_network(context, id, network)
+        raise faults.BadRequest(explanation='Unsupported Operation')
 
     def get_network(self, context, id, fields=None):
         network = super(IronicPlugin, self).get_network(context, id, fields)
@@ -71,7 +70,6 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
                      page_reverse=False):
         networks = super(IronicPlugin, self).get_networks(
             context, filters, fields, sorts, limit, marker, page_reverse)
-
         return [self._add_network_data(n) for n in networks]
 
     def _add_network_data(self, neutron_network, ironic_network=None):
@@ -88,7 +86,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         return super(IronicPlugin, self).delete_subnet(context, id)
 
     def update_subnet(self, context, id, subnet):
-        return super(IronicPlugin, self).update_subnet(context, id, subnet)
+        raise faults.BadRequest(explanation='Unsupported Operation')
 
     def create_port(self, context, port):
 
@@ -97,27 +95,29 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
             raise faults.BadRequest(explanation='"device_id" is required')
 
         mac_address = port['port'].get('mac_address')
-        if not isinstance(mac_address, basestring):  # this is an object if not specified
-            raise faults.BadRequest(explanation='"mac_address" is required')
+        if isinstance(mac_address, basestring):  # this is an object if not specified
+            raise faults.BadRequest(explanation='"mac_address" is not allowed')
 
         ironic_ports = list(db.filter_portmaps(device_id=device_id))
 
-        # TODO(morgabra) enforce number of switchports?
+        # TODO(morgabra) determind if trunked or not
         if len(ironic_ports) < 1:
             raise faults.BadRequest(explanation='No portmaps for device "%s" found' % (device_id))
 
         port = super(IronicPlugin, self).create_port(context, port)
         self._add_port_data(port, ironic_ports)
 
-        self.driver_manager.attach(port['network_id'], ironic_ports)
+        self.driver_manager.attach(port, ironic_ports)
         return port
 
     def delete_port(self, context, id):
-        # TODO(morgabra) implement
+        port = self.get_port(context, id)
+        ironic_ports = list(db.filter_portmaps(device_id=port['device_id']))
+        self.driver_manager.detach(port, ironic_ports)
         return super(IronicPlugin, self).delete_port(context, id)
 
     def update_port(self, context, id, port):
-        return super(IronicPlugin, self).update_port(context, id, port)
+        raise faults.BadRequest(explanation='Unsupported Operation')
 
     def get_port(self, context, id, fields=None):
         port = super(IronicPlugin, self).get_port(context, id, fields)

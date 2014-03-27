@@ -33,7 +33,7 @@ class SwitchController(wsgi.Controller):
         return dict(switch=switch.as_dict())
 
     def delete(self, request, id):
-        return "delete switch %s" % id
+        db.delete_switch(id)
 
     def create(self, request):
 
@@ -89,8 +89,7 @@ class PortMapController(wsgi.Controller):
         return dict(portmap=portmap.as_dict())
 
     def delete(self, request, id):
-        return "delete portmap %s" % id
-
+        db.delete_portmap(id)
 
     def create(self, request):
 
