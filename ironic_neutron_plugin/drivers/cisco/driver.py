@@ -121,11 +121,12 @@ class CiscoDriver(base_driver.Driver):
 
     def _run_commands(self, switch_port, commands):
 
-        #conn = self._connect(switch_port.switch)
+        # TODO(morgabra) debug mode, only log commands
+        conn = self._connect(switch_port.switch)
         try:
             LOG.debug("Executing commands: %s" % (commands))
 
-            #conn.command(commands)
+            conn.command(commands)
         except Exception as e:
             raise CiscoException(e)
 
