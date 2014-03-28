@@ -16,13 +16,15 @@ class IronicSwitchPort(model_base.BASEV2):
     switch_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switches.id'))
     device_id = sa.Column(sa.String(255), index=True)  # ironic chassis id
     port = sa.Column(sa.String(255))  # switch port number: <1-n>
+    primary = sa.Column(sa.Boolean)  # for non-trunked networks, only this port will be configured
 
     def as_dict(self):
         return {
             'id': self.id,
             'switch_id': self.switch_id,
             'device_id': self.device_id,
-            'port': self.port
+            'port': self.port,
+            'primary': self.primary
         }
 
 class IronicSwitchType(object):
@@ -70,13 +72,16 @@ class IronicNetwork(model_base.BASEV2):
     physical_network = sa.Column(sa.String(255))
     segmentation_id = sa.Column(sa.Integer)
     network_type = sa.Column(sa.String(255))
+    #TODO(morgabra) We need to know if a particular network should use a trunked config
+    #               or not, not sure if this is the best way to accomplish this.
+    trunked = sa.Column(sa.Boolean)
 
     def as_dict(self):
         return {
             "provider:physical_network": self.physical_network,
             "provider:segmentation_id": self.segmentation_id,
             "provider:network_type": self.network_type,
-
+            "switch:trunked": self.trunked
         }
 
 class IronicPortBinding(model_base.BASEV2):
@@ -92,10 +97,13 @@ class IronicPortBinding(model_base.BASEV2):
 
     # TODO(morgabra) This is confusing, port_id is a neutron port
     port_id = sa.Column(sa.String(255), primary_key=True)
+    network_id = sa.Column(sa.String(255), primary_key=True)
     switch_port_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switch_ports.id'), primary_key=True)
+
 
     def as_dict(self):
         return {
             "port_id": self.port_id,
+            "network_id": self.network_id,
             "switch_port_id": self.switch_port_id
         }

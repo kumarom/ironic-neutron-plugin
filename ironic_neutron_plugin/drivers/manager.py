@@ -20,27 +20,31 @@ class DriverManager(object):
         for switch_type, driver_class in DRIVER_MAP.items():
             self._drivers[switch_type] = driver_class()
 
-    def attach(self, neutron_port, switch_ports):
+    def attach(self, neutron_port, switch_ports, trunked):
         """Realize a neutron port configuration on given physical ports."""
         try:
             for switch_port in switch_ports:
-                self._drivers[switch_port.switch.type].attach(neutron_port, switch_port)
-                #TODO(morgabra) Create the portbinding first, but maybe in a disable/unconfigured state, and update the flag post config.
-                #               We need to do that because there are some config options that can't be cleared without relevant information
+                self._drivers[switch_port.switch.type].attach(neutron_port, switch_port, trunked)
+                #TODO(morgabra) Handle configuration failure, could potentially end up half-configured on the switch.
+                #               The biggest issue is IPSG, there's no way to remove bindings globally for an interface.
+                #               Additionally, there is no 'default interface eth <X>', but there is one for port-channels, which
+                #               requires that you back out each ethernet config option with 'no <conf>'.
                 db.create_portbinding(
                     port_id=neutron_port['id'],
+                    network_id=neutron_port['network_id'],
                     switch_port_id=switch_port['id'])
         except base_driver.DriverException as e:
             LOG.error('Failed configuring port', switch_port.as_dict())
             raise e
 
-    def detach(self, neutron_port, switch_ports):
+    def detach(self, neutron_port, switch_ports, trunked):
         """Realize a neutron port configuration on given physical ports."""
         try:
             for switch_port in switch_ports:
-                self._drivers[switch_port.switch.type].detach(neutron_port, switch_port)
+                self._drivers[switch_port.switch.type].detach(neutron_port, switch_port, trunked)
                 db.delete_portbinding(
                     port_id=neutron_port['id'],
+                    network_id=neutron_port['network_id'],
                     switch_port_id=switch_port['id'])
         except base_driver.DriverException as e:
             LOG.error('Failed configuring port', switch_port.as_dict())

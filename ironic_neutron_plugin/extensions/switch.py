@@ -10,14 +10,20 @@ from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 
-PORT_EXTRA_ATTRIBUTES = {
+#TODO(morgabra) 'switch' is a terrible extension name
+
+EXTRA_ATTRIBUTES = {
     'ports': {
         'switch:portmaps': {'allow_post': False, 'allow_put': False,
                             'validate': {'type:list': None},
                             'is_visible': True}
+    },
+    'networks': {
+        'switch:trunked': {'allow_post': True, 'allow_put': False,
+                           'validate': {'type:boolean': None},
+                           'is_visible': True}
     }
 }
-
 
 class SwitchController(wsgi.Controller):
 
@@ -109,6 +115,7 @@ class PortMapController(wsgi.Controller):
             switch_id = body.pop('switch_id')
             device_id = body.pop('device_id')
             port = body.pop('port')
+            primary = body.pop('primary')
         except KeyError:
             raise faults.BadRequest(
                 title='Invalid JSON Body',
@@ -119,7 +126,17 @@ class PortMapController(wsgi.Controller):
         if not switch:
             raise faults.BadRequest(title='Switch %s does not exist' % (switch_id))
 
-        portmap = db.create_portmap(switch_id, device_id, port)
+        # Validation - max 2 portmaps and only 1 primary
+        portmaps = list(db.filter_portmaps(device_id=device_id))
+
+        # TODO(morgabra) Is this worth making configurable?
+        if len(portmaps) > 1:
+            raise faults.BadRequest(title='Not allowed more than 2 portmaps')
+
+        if (primary == True) and (any([p.primary for p in portmaps])):
+            raise faults.BadRequest(title='Not allowed more than 1 primary portmap')
+
+        portmap = db.create_portmap(switch_id, device_id, port, primary)
         return dict(portmap=portmap.as_dict())
 
 
@@ -159,6 +176,6 @@ class Switch(extensions.ExtensionDescriptor):
 
     def get_extended_resources(self, version):
         if version == "2.0":
-            return PORT_EXTRA_ATTRIBUTES
+            return EXTRA_ATTRIBUTES
         else:
             return {}

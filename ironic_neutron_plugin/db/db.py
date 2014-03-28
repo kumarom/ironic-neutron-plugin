@@ -7,12 +7,13 @@ from ironic_neutron_plugin.db import models
 
 LOG = logging.getLogger(__name__)
 
-def create_portbinding(port_id, switch_port_id):
+def create_portbinding(port_id, network_id, switch_port_id):
     session = db_api.get_session()
 
     with session.begin(subtransactions=True):
         portbinding = models.IronicPortBinding(
                         port_id=port_id,
+                        network_id=network_id,
                         switch_port_id=switch_port_id)
         session.add(portbinding)
         return portbinding
@@ -23,12 +24,12 @@ def get_all_portbindings():
     return (session.query(models.IronicPortBinding).all())
 
 
-def get_portbinding(port_id, switch_port_id):
+def get_portbinding(port_id, network_id, switch_port_id):
     session = db_api.get_session()
 
     try:
         return (session.query(models.IronicPortBinding).
-                get((port_id, switch_port_id)))
+                get((port_id, network_id, switch_port_id)))
     except orm.exc.NoResultFound:
         return None
 
@@ -40,10 +41,16 @@ def filter_portbindings(**kwargs):
             filter_by(**kwargs))
 
 
-def delete_portbinding(port_id, switch_port_id):
+def filter_portbindings_by_switch_port_ids(ids):
+    session = db_api.get_session()
+    return (session.query(models.IronicPortBinding).
+            filter(models.IronicPortBinding.switch_port_id.in_(ids)))
+
+
+def delete_portbinding(port_id, network_id, switch_port_id):
     session = db_api.get_session()
 
-    portbinding = get_portbinding(port_id, switch_port_id)
+    portbinding = get_portbinding(port_id, network_id, switch_port_id)
 
     if not portbinding:
         return False  #TODO(morgabra) throw probably
@@ -53,14 +60,15 @@ def delete_portbinding(port_id, switch_port_id):
     return True
 
 
-def create_portmap(switch_id, device_id, port):
+def create_portmap(switch_id, device_id, port, primary):
     session = db_api.get_session()
 
     with session.begin(subtransactions=True):
         portmap = models.IronicSwitchPort(
                     switch_id=switch_id,
                     device_id=device_id,
-                    port=port)
+                    port=port,
+                    primary=primary)
         session.add(portmap)
         return portmap
 
@@ -154,8 +162,8 @@ def get_network(network_id):
         return None
 
 
-def create_network(network_id, physical_network=None,
-                   segmentation_id=None, network_type=None):
+def create_network(network_id, physical_network,
+                   segmentation_id, network_type, trunked):
     session = db_api.get_session()
 
     with session.begin(subtransactions=True):
@@ -163,7 +171,8 @@ def create_network(network_id, physical_network=None,
                     network_id=network_id,
                     physical_network=physical_network,
                     segmentation_id=segmentation_id,
-                    network_type=network_type)
+                    network_type=network_type,
+                    trunked=trunked)
         session.add(network)
         return network
 

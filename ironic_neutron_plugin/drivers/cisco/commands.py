@@ -27,6 +27,27 @@ def _base_access_configuration(device_id, interface, vlan_id):
         'no shutdown'
     ]
 
+# TODO(morgabra) Ideally a switch would support 'default interface eth 1/X'
+#                or something similar, but for some reason the 3172s do not
+#                for physical interfaces so you have to manually unset everything.
+def _delete_access_configuration(vlan_id):
+    return [
+        'no description',
+        'no switchport mode access',
+        'no switchport access vlan %s' % (vlan_id),
+        'no spanning-tree port type edge',
+        'shutdown'
+    ]
+
+def _delete_trunked_configuration():
+    return [
+        'no description',
+        'no switchport mode trunk',
+        'no switchport trunk allowed vlan all',
+        'no spanning-tree port type edge trunk',
+        'shutdown'
+    ]
+
 def _add_vpc(interface):
     return [
         'vpc %s' % interface,
@@ -49,24 +70,28 @@ def _unbind_ip(ip, mac_address, vlan_id, interface):
         ['no ip source binding %s %s vlan %s interface port-channel%s' % (ip, mac_address, vlan_id, interface)]
     )
 
-def _shutdown_port_channel_interface(interface):
+def _delete_port_channel_interface(interface):
     return (
         _configure() +
         ['no interface port-channel %s' % (interface)]
     )
 
-# TODO(morgabra) We actually need to clear settings here, but I'm not sure how to do that, for now
-# if you switch between an access port and a trunked port it will break.
-def _shutdown_ethernet_interface(interface):
+def _delete_ethernet_interface(interface, trunked, vlan_id=None):
+    cmd = None
+    if trunked:
+        cmd = _delete_trunked_configuration()
+    else:
+        cmd = _delete_access_configuration(vlan_id)
+
     return (
         _configure_interface('ethernet', '1/%s' % (interface)) +
-        ['shutdown']
+        cmd
     )
 
 def show_interface_configuration(type, interface):
     return ['show running interface %s %s' % (type, interface)]
 
-def create_port(device_id, interface, vlan_id, ip, mac_address, trunked=True):
+def create_port(device_id, interface, vlan_id, ip, mac_address, trunked):
 
     conf = []
     if trunked:
@@ -92,31 +117,37 @@ def create_port(device_id, interface, vlan_id, ip, mac_address, trunked=True):
 
     return conf
 
-def shutdown_port(interface):
+def delete_port(interface, trunked, vlan_id=None):
 
     return (
-        # TODO(morgabra) this will leave orphaned port bindings! Make sure you remove all vlans before shutting down a port
-        _shutdown_port_channel_interface(interface) +
-        _shutdown_ethernet_interface(interface)
+        # TODO(morgabra) this will leave orphaned ip bindings if trunked!
+        # Make sure you remove all vlans before deleting a port
+        _delete_port_channel_interface(interface) +
+        _delete_ethernet_interface(interface, trunked, vlan_id=vlan_id)
     )
 
-def add_vlan(interface, vlan_id, ip, mac_address):
-    return (
-        # port-channel
-        _configure_interface('port-channel', interface) +
-        ['switchport trunk allowed vlan add %s' % (vlan_id)] +
+def add_vlan(interface, vlan_id, ip, mac_address, trunked):
+        if trunked:
+            return (
+                # port-channel
+                _configure_interface('port-channel', interface) +
+                ['switchport trunk allowed vlan add %s' % (vlan_id)] +
 
-        # IPSG
-        # TODO(morgbara) This doesn't appear to do anything on the 3172s
-        _bind_ip(ip, mac_address, vlan_id, interface)
-    )
+                # IPSG
+                _bind_ip(ip, mac_address, vlan_id, interface)
+            )
+        else:
+            return []  # TODO(morgabra) throw? This is a no-op
 
-def remove_vlan(interface, vlan_id, ip, mac_address):
-    return (
-        # port-channel
-        _configure_interface('port-channel', interface) +
-        ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
+def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
+    if trunked:
+        return (
+            # port-channel
+            _configure_interface('port-channel', interface) +
+            ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
 
-        # IPSG
-        _unbind_ip(ip, mac_address, vlan_id, interface)
-    )
+            # IPSG
+            _unbind_ip(ip, mac_address, vlan_id, interface)
+        )
+    else:
+        return []  #TODO(morgabra) throw? This is a no-op

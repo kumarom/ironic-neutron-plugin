@@ -104,7 +104,9 @@ PortMap (Extension Object)
 Represents a mapping of abstract 'device_id' to a physical switch port.
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "device_id": "device", "port": "1/40", "mac_address": "aa:aa:aa:aa:aa:aa"}}'```
+```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "device_id": "device", "port": "40", "primary": true}}'```
+
+```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "device_id": "device", "port": "40", "primary": false}}'```
 
 #### Read
 ```curl localhost:9696/v2.0/portmaps```
@@ -124,7 +126,12 @@ Network (Neutron Object)
 Default neutron network object, we additionally make use of the provider network extension.
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "PUBLIC-Cust", "provider:physical_network": "PUBLIC-Cust", "provider:network_type": "vlan", "provider:segmentation_id": 301, "tenant_id": "mytenant"}}'```
+```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "PUBLIC-Cust", "provider:physical_network": "PUBLIC-Cust", "provider:network_type": "vlan", "provider:segmentation_id": 301, "tenant_id": "mytenant", "switch:trunked": true}}'```
+
+```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "SNET-Cust", "provider:physical_network": "SNET-Cust", "provider:network_type": "vlan", "provider:segmentation_id": 201, "tenant_id": "mytenant", "switch:trunked": true}}'```
+
+```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "DECOM", "provider:physical_network": "DECOM", "provider:network_type": "vlan", "provider:segmentation_id": 50, "tenant_id": "mytenant", "switch:trunked": false}}'```
+
 
 #### Read
 ```curl localhost:9696/v2.0/networks```
@@ -139,7 +146,11 @@ Subnet (Neutron Object)
 Default neutron subnet object.
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<network_id>", "ip_version": 4, "cidr": "10.127.104.0/25", "tenant_id": "mytenant"}}'```
+```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<PUBLIC_network_id>", "ip_version": 4, "cidr": "10.127.104.0/25", "tenant_id": "mytenant"}}'```
+
+```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<SNET_network_id>", "ip_version": 4, "cidr": "10.128.0.0/25", "tenant_id": "mytenant"}}'```
+
+```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<DECOM_network_id>", "ip_version": 4, "cidr": "10.129.0.0/25", "tenant_id": "mytenant"}}'```
 
 ### Read
 ```curl localhost:9696/v2.0/subnets```

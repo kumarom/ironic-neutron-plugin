@@ -50,11 +50,13 @@ class CiscoDriver(base_driver.Driver):
         # get existing port bindings
         return list(db.filter_portbindings(switch_port_id=switch_port['id']))
 
-    def attach(self, neutron_port, switch_port):
+    def attach(self, neutron_port, switch_port, trunked):
 
         vlan_id = self._get_vlan_id(neutron_port)
         ip = self._get_ip(neutron_port)
 
+        # TODO(morgabra) We should move this logic out to the manager probably, and
+        #                have drivers implement create() and attach()/detach() separately.
         port_bindings = self._get_port_bindings(switch_port)
 
         if not len(port_bindings):
@@ -64,43 +66,42 @@ class CiscoDriver(base_driver.Driver):
                 interface=switch_port['port'],
                 vlan_id=vlan_id,
                 ip=ip,
-                mac_address=neutron_port['mac_address']))
+                mac_address=neutron_port['mac_address'],
+                trunked=trunked))
         else:
             LOG.debug('Existing bindings, adding vlan')
             self._run_commands(switch_port, commands.add_vlan(
                 interface=switch_port['port'],
                 vlan_id=vlan_id,
                 ip=ip,
-                mac_address=neutron_port['mac_address']))
+                mac_address=neutron_port['mac_address'],
+                trunked=trunked))
 
-    def detach(self, neutron_port, switch_port):
+    def detach(self, neutron_port, switch_port, trunked):
         vlan_id = self._get_vlan_id(neutron_port)
         ip = self._get_ip(neutron_port)
 
         port_bindings = self._get_port_bindings(switch_port)
 
         try:
-
             if not len(port_bindings):
                 msg = 'No portbindings found for given port, doing nothing...'
                 LOG.error(msg)
-            elif len(port_bindings) == 1:
-                LOG.debug('Last binding for port, detaching and shutting down...')
-                # TODO(morgabra) We have to remove the vlan first to disable IPSG
-                self._run_commands(switch_port, commands.remove_vlan(
+                return
+
+            self._run_commands(switch_port, commands.remove_vlan(
+                interface=switch_port['port'],
+                vlan_id=vlan_id,
+                ip=ip,
+                mac_address=neutron_port['mac_address'],
+                trunked=trunked))
+
+            if len(port_bindings) == 1:
+                LOG.debug('Last binding for port, shutting down ports...')
+                self._run_commands(switch_port, commands.delete_port(
                     interface=switch_port['port'],
                     vlan_id=vlan_id,
-                    ip=ip,
-                    mac_address=neutron_port['mac_address']))
-                self._run_commands(switch_port, commands.shutdown_port(
-                    interface=switch_port['port']))
-            else:
-                LOG.debug('More than 1 binding for port, removing vlan only...')
-                self._run_commands(switch_port, commands.remove_vlan(
-                    interface=switch_port['port'],
-                    vlan_id=vlan_id,
-                    ip=ip,
-                    mac_address=neutron_port['mac_address']))
+                    trunked=trunked))
 
         except CiscoException as e:
             #TODO(morgabra) We can ignore some classes of errors, but not all
@@ -120,11 +121,11 @@ class CiscoDriver(base_driver.Driver):
 
     def _run_commands(self, switch_port, commands):
 
-        conn = self._connect(switch_port.switch)
+        #conn = self._connect(switch_port.switch)
         try:
             LOG.debug("Executing commands: %s" % (commands))
 
-            conn.command(commands)
+            #conn.command(commands)
         except Exception as e:
             raise CiscoException(e)
 

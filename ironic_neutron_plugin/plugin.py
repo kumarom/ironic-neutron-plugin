@@ -29,7 +29,6 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
 
     def create_network(self, context, network):
-        #TODO(morgabra) Validation
         #TODO(morgabra) Actually provision vlan or whatever
 
         physical_network = network['network'].get('provider:physical_network')
@@ -44,21 +43,28 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         if not segmentation_id:
             raise faults.BadRequest(explanation='"provider:segmentation_id" is required')
 
+        trunked = network['network'].get('switch:trunked')
+
         neutron_network = super(IronicPlugin, self).create_network(context, network)
 
         ironic_network = db.create_network(
             neutron_network['id'],
             physical_network=physical_network,
             network_type=network_type,
-            segmentation_id=segmentation_id
+            segmentation_id=segmentation_id,
+            trunked=bool(trunked)
         )
         return self._add_network_data(neutron_network, ironic_network)
 
     def delete_network(self, context, id):
+        #TODO(morgabra) What does this mean? Iterate over every switch and remove
+        #               the relevant vlan?
         db.delete_network(id)
         return super(IronicPlugin, self).delete_network(context, id)
 
     def update_network(self, context, id, network):
+        # TODO(morgabra) We could probably support metadata updating, but it's
+        #                really complicated to update a network from under a running config
         raise faults.BadRequest(explanation='Unsupported Operation')
 
     def get_network(self, context, id, fields=None):
@@ -76,7 +82,8 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         """Update default network response with provider network info (segmentation_id, etc)"""
         if not ironic_network:
             ironic_network = db.get_network(neutron_network['id'])
-        neutron_network.update(ironic_network.as_dict())
+        if ironic_network:
+            neutron_network.update(ironic_network.as_dict())
         return neutron_network
 
     def create_subnet(self, context, subnet):
@@ -86,9 +93,13 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         return super(IronicPlugin, self).delete_subnet(context, id)
 
     def update_subnet(self, context, id, subnet):
+        # TODO(morgabra) We could probably support metadata updating, but it's
+        #                really complicated to update a subnet from under a running config
         raise faults.BadRequest(explanation='Unsupported Operation')
 
     def create_port(self, context, port):
+
+        network_id = port['port']['network_id']
 
         device_id = port['port'].get('device_id')
         if not device_id:
@@ -98,22 +109,52 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         if isinstance(mac_address, basestring):  # this is an object if not specified
             raise faults.BadRequest(explanation='"mac_address" is not allowed')
 
-        ironic_ports = list(db.filter_portmaps(device_id=device_id))
+        ironic_network = db.get_network(network_id)
 
-        # TODO(morgabra) determind if trunked or not
+        if ironic_network.trunked:
+            ironic_ports = list(db.filter_portmaps(device_id=device_id))
+        else:
+            ironic_ports = list(db.filter_portmaps(device_id=device_id, primary=True))
+
         if len(ironic_ports) < 1:
-            raise faults.BadRequest(explanation='No portmaps for device "%s" found' % (device_id))
+            raise faults.BadRequest(explanation='No suitable portmap(s) for device "%s" found' % (device_id))
+
+        # fetch all existing active networks on this port
+        portbindings = list(db.filter_portbindings_by_switch_port_ids(
+            [p.id for p in ironic_ports]))
+        bound_network_ids = [pb.network_id for pb in portbindings]
+
+
+        if bound_network_ids and (ironic_network.trunked == False):
+            raise faults.BadRequest(explanation=(
+                'Cannot attach non-trunked network, port already bound to network(s) %s' % (bound_network_ids))
+            )
+
+        for bound_network_id in bound_network_ids:
+
+            # Validate we aren't already attached to this network
+            if network_id == bound_network_id:
+                raise faults.BadRequest(explanation='Already attached to network %s' % (network_id))
+
+            # Validate this port has only other trunked networks attached
+            bound_network = db.get_network(bound_network_id)
+            if not bound_network.trunked:
+                raise faults.BadRequest(explanation='Already attached to non-trunked network %s' % (bound_network_id))
 
         port = super(IronicPlugin, self).create_port(context, port)
         self._add_port_data(port, ironic_ports)
 
-        self.driver_manager.attach(port, ironic_ports)
+        self.driver_manager.attach(port, ironic_ports, ironic_network.trunked)
         return port
 
     def delete_port(self, context, id):
         port = self.get_port(context, id)
         ironic_ports = list(db.filter_portmaps(device_id=port['device_id']))
-        self.driver_manager.detach(port, ironic_ports)
+
+        ironic_network = db.get_network(port['network_id'])
+        trunked = ironic_network.trunked
+
+        self.driver_manager.detach(port, ironic_ports, trunked)
         return super(IronicPlugin, self).delete_port(context, id)
 
     def update_port(self, context, id, port):

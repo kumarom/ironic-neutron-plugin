@@ -9,11 +9,11 @@ class Driver(object):
     """Define stable abstract interface for ironic neutron plugin hardware drivers."""
 
     @abstractmethod
-    def attach(self, switch_port, vlanid):
+    def attach(self, neutron_port, switch_port, trunked):
         """Realize a neutron port configuration on given physical switch ports."""
         pass
 
     @abstractmethod
-    def detach(self, switch_port, vlanid):
+    def detach(self, neutron_port, switch_port, trunked):
         """Remove a neutron port configuration on given physical switch ports."""
         pass
