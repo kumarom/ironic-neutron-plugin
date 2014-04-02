@@ -1,3 +1,17 @@
+# Copyright 2014 Rackspace, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from sqlalchemy import orm
 
 from neutron.db import api as db_api
@@ -7,14 +21,15 @@ from ironic_neutron_plugin.db import models
 
 LOG = logging.getLogger(__name__)
 
+
 def create_portbinding(port_id, network_id, switch_port_id):
     session = db_api.get_session()
 
     with session.begin(subtransactions=True):
         portbinding = models.IronicPortBinding(
-                        port_id=port_id,
-                        network_id=network_id,
-                        switch_port_id=switch_port_id)
+            port_id=port_id,
+            network_id=network_id,
+            switch_port_id=switch_port_id)
         session.add(portbinding)
         return portbinding
 
@@ -53,7 +68,7 @@ def delete_portbinding(port_id, network_id, switch_port_id):
     portbinding = get_portbinding(port_id, network_id, switch_port_id)
 
     if not portbinding:
-        return False  #TODO(morgabra) throw probably
+        return False  # TODO(morgabra) throw probably
 
     session.delete(portbinding)
     session.flush()
@@ -65,10 +80,10 @@ def create_portmap(switch_id, device_id, port, primary):
 
     with session.begin(subtransactions=True):
         portmap = models.IronicSwitchPort(
-                    switch_id=switch_id,
-                    device_id=device_id,
-                    port=port,
-                    primary=primary)
+            switch_id=switch_id,
+            device_id=device_id,
+            port=port,
+            primary=primary)
         session.add(portmap)
         return portmap
 
@@ -110,10 +125,10 @@ def create_switch(switch_ip, username, password, switch_type):
 
     with session.begin(subtransactions=True):
         switch = models.IronicSwitch(
-                    ip=switch_ip,
-                    username=username,
-                    password=password,
-                    type=switch_type)
+            ip=switch_ip,
+            username=username,
+            password=password,
+            type=switch_type)
         session.add(switch)
         return switch
 
@@ -146,7 +161,7 @@ def delete_switch(switch_id):
     switch = get_switch(switch_id)
 
     if not switch:
-        return False  #TODO(morgabra) Throw probably
+        return False  # TODO(morgabra) Throw probably
 
     session.delete(switch)
     session.flush()
@@ -168,11 +183,11 @@ def create_network(network_id, physical_network,
 
     with session.begin(subtransactions=True):
         network = models.IronicNetwork(
-                    network_id=network_id,
-                    physical_network=physical_network,
-                    segmentation_id=segmentation_id,
-                    network_type=network_type,
-                    trunked=trunked)
+            network_id=network_id,
+            physical_network=physical_network,
+            segmentation_id=segmentation_id,
+            network_type=network_type,
+            trunked=trunked)
         session.add(network)
         return network
 
@@ -183,7 +198,7 @@ def delete_network(network_id):
     network = get_network(network_id)
 
     if not network:
-        return False  #TODO(morgabra) Throw probably
+        return False  # TODO(morgabra) Throw probably
 
     session.delete(network)
     session.flush()

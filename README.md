@@ -7,6 +7,7 @@ for managing an ironic deployment.
 This driver currently only handles configuring the ToR(s) to allow a device on a few pre-defined VLANs.
 
 This requires a few neutron api extensions:
+
 1. switch/credential management
 2. a mapping of device_id to physical switch(es)/port(s).
 
@@ -15,47 +16,28 @@ into a real plugin.
 
 Notes/Open Questions
 ====================
+
 1. An ml2 driver seems like it exposes enough functionality for us if we are only playing with ToRs. The major issue is there doesn't seem to be a clean way to hook into loading custom extensions, but this might be a bad idea anyway to maintain a portmap in neutron.
 2. A lot of the implementation details for configuring cisco stuff was copied from the neutron repo. As far as I can tell there doesn't exist sufficient abstraction to support the create_port() behavior we want but still use the existing vendor mechanism drivers. (At least not without a lot of hacking) I'm not sure what the long-term solution should be, but for now we'll likely have to implement yet another driver abstraction layer for the hardware we need to support.
 
 Development
 ===========
 
-Get Neutron
------------
-1. ```git clone git@github.com:openstack/neutron.git```
-
-Get Dependencies
-----------------
-0. ```pip install virtualenv```
-1. ```virtualenv devenv```
-2. ```. devenv/bin/activate```
-3. ```pip install -r requirements.txt```
-4. ```pip install mysql-python```
-
-Make a Start Script
--------------------
-```
-import sys
-
-from neutron.server import main
-
-if __name__ == "__main__":
-    sys.exit(main())
-```
-
-Edit neutron.conf
+Create neutron.conf
 -----------------
-0. A suitable template is located @ ironic-neutron-plugin/etc/neutron/neutron.conf
+
+0. A suitable template for development is located @ ironic-neutron-plugin/etc/neutron/neutron.conf.dist
 1. ```state_path``` - writable temp dir
 2. ```api_extensions_path``` - absolute path to ironic-neutron-pluin/extensions
 3. ```[database]``` - writeable mysql db - sqlite:// probably works?
-4. ```core_plugin``` - *IMPORTANT* this must be on your pythonpath, so neutron can find our plugin
+4. ```core_plugin``` - plugin module
 
 Run Neutron Server
 ------------------
-```python /path/to/start_script.py --config-file /path/to/neutron.conf --config-dir /path/to/neutron.git/etc```
-
+```
+# see scripts/neutron-server.sh for an example
+neutron-server --config-dir /path/to/neutron/etc/ --config-file /path/to/plugin/etc/neutron.conf
+```
 
 Deployment
 ==========
@@ -92,9 +74,6 @@ Represents a single physical switch, including management credentials. Has a rel
 
 ```curl localhost:9696/v2.0/switches/<switch_id>```
 
-#### Update (Not Implemented)
-```curl -XPOST localhost:9696/v2.0/switches -H 'Content-Type: application/json' -d '{"switch": {"password": "new_password"}}'```
-
 #### Delete (Not Implemented)
 ```curl -XDELETE localhost:9696/v2.0/switches/<switch_id>```
 
@@ -115,8 +94,6 @@ Represents a mapping of abstract 'device_id' to a physical switch port.
 
 ```curl localhost:9696/v2.0/portmaps?device_id=<device_id>```
 
-#### Update
-
 #### Delete
 ```curl -XDELETE localhost:9696/v2.0/portmaps/<portmap_id>```
 
@@ -132,13 +109,8 @@ Default neutron network object, we additionally make use of the provider network
 
 ```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "DECOM", "provider:physical_network": "DECOM", "provider:network_type": "vlan", "provider:segmentation_id": 50, "tenant_id": "mytenant", "switch:trunked": false}}'```
 
-
 #### Read
 ```curl localhost:9696/v2.0/networks```
-
-#### Update
-
-#### Delete
 
 Subnet (Neutron Object)
 -----------------------
@@ -155,10 +127,6 @@ Default neutron subnet object.
 ### Read
 ```curl localhost:9696/v2.0/subnets```
 
-#### Update
-
-#### Delete
-
 Port (Neutron Object)
 ---------------------
 
@@ -171,22 +139,26 @@ Default neutron port object. We require mac_address and device_id be set so we c
 #### Read
 
 ```curl localhost:9696/v2.0/ports```
-```curl localhost:9696/v2.0/ports?device_id=<device_id>```
 
-#### Update
+```curl localhost:9696/v2.0/ports?device_id=<device_id>```
 
 #### Delete
 
+```curl -XDELETE localhost:9696/v2.0/ports/<port_id>```
+
 NX-OS Crash Course
-------------------
+==================
+
 show running interface ethernet 1/40
+
 show running interface port-channel 40
+
 show ip dhcp snooping binding
 
-Config
-------
+Config Reference
+================
 
-"""
+```
 Config Templates:
 Notes:
 TOR1 and TOR2 are A and B side switches.
@@ -369,7 +341,7 @@ netmask 255.255.255.0
 hwaddress ether 90:e2:ba:56:64:55
 
 ----------------------------------------------------------
-"""
+```
 
 
 

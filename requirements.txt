@@ -1,0 +1,9 @@
+pbr>=0.6
+
+# ncclient dependencies (see ironic_neutron_plugin/extern)
+-e git+https://github.com/morgabra/ncclient.git@5857500c564ccff9a43a777a4b41088b8dedd053#egg=ncclient
+paramiko>=1.7.4
+
+# neutron + dependencies
+mysql-python>=1.2.5
+-e git+https://github.com/openstack/neutron.git@4b79389566f57225d32120e3509f7e871330daf5#egg=neutron

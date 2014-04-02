@@ -1,4 +1,10 @@
+.tox
+.coverage
 .DS_Store
 *.py[co]
 AUTHORS
 ChangeLog
+devenv
+*.egg-info
+etc/neutron.conf
+coverage.xml

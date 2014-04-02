@@ -1,3 +1,17 @@
+# Copyright 2014 Rackspace, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import sqlalchemy as sa
 from sqlalchemy import orm as sa_orm
 
@@ -5,6 +19,7 @@ from neutron.db import model_base
 from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
+
 
 class IronicSwitchPort(model_base.BASEV2):
     """Maps a device to a physical switch port."""
@@ -14,9 +29,12 @@ class IronicSwitchPort(model_base.BASEV2):
     id = sa.Column(sa.Integer, primary_key=True, autoincrement=True)
 
     switch_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switches.id'))
-    device_id = sa.Column(sa.String(255), index=True)  # ironic chassis id
-    port = sa.Column(sa.String(255))  # switch port number: <1-n>
-    primary = sa.Column(sa.Boolean)  # for non-trunked networks, only this port will be configured
+    # ironic chassis id
+    device_id = sa.Column(sa.String(255), index=True)
+    # switch port number: <1-n>
+    port = sa.Column(sa.String(255))
+    # for non-trunked networks, only this port will be configured
+    primary = sa.Column(sa.Boolean)
 
     def as_dict(self):
         return {
@@ -26,6 +44,7 @@ class IronicSwitchPort(model_base.BASEV2):
             'port': self.port,
             'primary': self.primary
         }
+
 
 class IronicSwitchType(object):
 
@@ -38,6 +57,7 @@ class IronicSwitchType(object):
             'cisco': cls.cisco,
             'arista': cls.arista
         }
+
 
 class IronicSwitch(model_base.BASEV2):
     """A physical switch and admin credentials."""
@@ -52,7 +72,8 @@ class IronicSwitch(model_base.BASEV2):
 
     # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
-    switch_ports = sa_orm.relationship('IronicSwitchPort', cascade='all,delete', backref='switch')
+    switch_ports = sa_orm.relationship(
+        'IronicSwitchPort', cascade='all,delete', backref='switch')
 
     def as_dict(self):
         return {
@@ -63,8 +84,9 @@ class IronicSwitch(model_base.BASEV2):
             'type': self.type
         }
 
+
 class IronicNetwork(model_base.BASEV2):
-    """Keep track of vlans via 'provider' API extension"""
+    """Keep track of vlans via 'provider' API extension."""
 
     __tablename__ = "ironic_networks"
 
@@ -72,8 +94,9 @@ class IronicNetwork(model_base.BASEV2):
     physical_network = sa.Column(sa.String(255))
     segmentation_id = sa.Column(sa.Integer)
     network_type = sa.Column(sa.String(255))
-    #TODO(morgabra) We need to know if a particular network should use a trunked config
-    #               or not, not sure if this is the best way to accomplish this.
+    # TODO(morgabra) We need to know if a particular network should
+    # use a trunked config or not, not sure if this is the best way
+    # to accomplish this.
     trunked = sa.Column(sa.Boolean)
 
     def as_dict(self):
@@ -84,22 +107,25 @@ class IronicNetwork(model_base.BASEV2):
             "switch:trunked": self.trunked
         }
 
+
 class IronicPortBinding(model_base.BASEV2):
     """Keep track of active switch configurations.
 
-    TODO(morgabra) This keeps switch config state in neutron. In general, if there is an entry here then
-    the configuration is running on the switch. There are many problems with this plan.
+    TODO(morgabra) This keeps switch config state in neutron.
+    In general, if there is an entry here then the configuration is running
+    on the switch. There are many problems with this plan.
 
-    TODO(morgabra) Ideally we implement config validation and purge/sync utilities which should let us get
-    away without keeping any state?"""
+    TODO(morgabra) Ideally we implement config validation and purge/sync
+    utilities which should let us get away without keeping any state?
+    """
 
     __tablename__ = "ironic_port_bindings"
 
     # TODO(morgabra) This is confusing, port_id is a neutron port
     port_id = sa.Column(sa.String(255), primary_key=True)
     network_id = sa.Column(sa.String(255), primary_key=True)
-    switch_port_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switch_ports.id'), primary_key=True)
-
+    switch_port_id = sa.Column(
+        sa.Integer, sa.ForeignKey('ironic_switch_ports.id'), primary_key=True)
 
     def as_dict(self):
         return {

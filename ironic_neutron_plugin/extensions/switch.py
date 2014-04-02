@@ -1,8 +1,22 @@
+# Copyright 2014 Rackspace, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from neutron.api import extensions
 from neutron import wsgi
 
-from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.common import faults
+from ironic_neutron_plugin.db import db
 
 from simplejson import scanner as json_scanner
 
@@ -24,6 +38,7 @@ EXTRA_ATTRIBUTES = {
                            'is_visible': True}
     }
 }
+
 
 class SwitchController(wsgi.Controller):
 
@@ -68,7 +83,8 @@ class SwitchController(wsgi.Controller):
         switch = db.get_switch(switch_ip)
 
         if switch:
-            raise faults.BadRequest(title='Switch %s already exists' % (switch_ip))
+            raise faults.BadRequest(
+                title='Switch %s already exists' % (switch_ip))
 
         switch = db.create_switch(switch_ip, username, password, switch_type)
         return dict(switch=switch.as_dict())
@@ -124,17 +140,20 @@ class PortMapController(wsgi.Controller):
         switch = db.get_switch(switch_id)
 
         if not switch:
-            raise faults.BadRequest(title='Switch %s does not exist' % (switch_id))
+            raise faults.BadRequest(
+                title='Switch %s does not exist' % (switch_id))
 
         # Validation - max 2 portmaps and only 1 primary
         portmaps = list(db.filter_portmaps(device_id=device_id))
 
         # TODO(morgabra) Is this worth making configurable?
         if len(portmaps) > 1:
-            raise faults.BadRequest(title='Not allowed more than 2 portmaps')
+            raise faults.BadRequest(
+                title='Not allowed more than 2 portmaps')
 
-        if (primary == True) and (any([p.primary for p in portmaps])):
-            raise faults.BadRequest(title='Not allowed more than 1 primary portmap')
+        if (primary is True) and (any([p.primary for p in portmaps])):
+            raise faults.BadRequest(
+                title='Not allowed more than 1 primary portmap')
 
         portmap = db.create_portmap(switch_id, device_id, port, primary)
         return dict(portmap=portmap.as_dict())
@@ -152,7 +171,8 @@ class Switch(extensions.ExtensionDescriptor):
 
     @classmethod
     def get_description(cls):
-        return "Physical switch with access credentials and device_id <-> switch port mapping"
+        return ("Physical switch with access credentials "
+                "and device_id <-> switch port mapping")
 
     @classmethod
     def get_namespace(cls):
@@ -172,7 +192,6 @@ class Switch(extensions.ExtensionDescriptor):
                                                  PortMapController())
         resources.append(presource)
         return resources
-
 
     def get_extended_resources(self, version):
         if version == "2.0":

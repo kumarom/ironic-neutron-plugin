@@ -21,14 +21,16 @@ This is lifted partially from the cisco ml2 mechanism.
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
-from ironic_neutron_plugin.drivers.cisco import commands
-from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.db import db
+from ironic_neutron_plugin.drivers import base as base_driver
+from ironic_neutron_plugin.drivers.cisco import commands
 
 LOG = logging.getLogger(__name__)
 
+
 class CiscoException(base_driver.DriverException):
     pass
+
 
 class CiscoDriver(base_driver.Driver):
 
@@ -43,7 +45,9 @@ class CiscoDriver(base_driver.Driver):
     def _get_ip(self, neutron_port):
         ips = neutron_port['fixed_ips']
         if len(ips) != 1:
-            raise CiscoException('More than 1 IP assigned to port %s, bailing out.' % (neutron_port['id']))
+            raise CiscoException(
+                ('More than 1 IP assigned to port %s,'
+                 ' bailing out.' % (neutron_port['id'])))
         return ips[0]['ip_address']
 
     def _get_port_bindings(self, switch_port):
@@ -55,8 +59,8 @@ class CiscoDriver(base_driver.Driver):
         vlan_id = self._get_vlan_id(neutron_port)
         ip = self._get_ip(neutron_port)
 
-        # TODO(morgabra) We should move this logic out to the manager probably, and
-        #                have drivers implement create() and attach()/detach() separately.
+        # TODO(morgabra) We should move this logic out to the manager probably,
+        # and have drivers implement create() and attach()/detach() separately.
         port_bindings = self._get_port_bindings(switch_port)
 
         if not len(port_bindings):

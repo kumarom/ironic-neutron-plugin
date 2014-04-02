@@ -1,16 +1,31 @@
-from neutron.openstack.common import log as logging
+# Copyright 2014 Rackspace, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.db import models
 
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import driver as cisco_driver
-from ironic_neutron_plugin.db import db
+
+from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 
 DRIVER_MAP = {
     models.IronicSwitchType.cisco: cisco_driver.CiscoDriver
 }
+
 
 class DriverManager(object):
 
@@ -24,11 +39,10 @@ class DriverManager(object):
         """Realize a neutron port configuration on given physical ports."""
         try:
             for switch_port in switch_ports:
-                self._drivers[switch_port.switch.type].attach(neutron_port, switch_port, trunked)
-                #TODO(morgabra) Handle configuration failure, could potentially end up half-configured on the switch.
-                #               The biggest issue is IPSG, there's no way to remove bindings globally for an interface.
-                #               Additionally, there is no 'default interface eth <X>', but there is one for port-channels, which
-                #               requires that you back out each ethernet config option with 'no <conf>'.
+                driver = self._drivers[switch_port.switch.type]
+                driver.attach(neutron_port, switch_port, trunked)
+                # TODO(morgabra) Handle configuration failure, could
+                # potentially end up half-configured on the switch.
                 db.create_portbinding(
                     port_id=neutron_port['id'],
                     network_id=neutron_port['network_id'],
@@ -41,7 +55,8 @@ class DriverManager(object):
         """Realize a neutron port configuration on given physical ports."""
         try:
             for switch_port in switch_ports:
-                self._drivers[switch_port.switch.type].detach(neutron_port, switch_port, trunked)
+                driver = self._drivers[switch_port.switch.type]
+                driver.detach(neutron_port, switch_port, trunked)
                 db.delete_portbinding(
                     port_id=neutron_port['id'],
                     network_id=neutron_port['network_id'],
