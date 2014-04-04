@@ -85,8 +85,8 @@ def _add_channel_group(interface):
 def _bind_ip(ip, mac_address, vlan_id, interface):
     return (
         _configure() +
-        [('ip source binding %s %s vlan %s ')
-         ('interface port-channel%s') % (ip, mac_address, vlan_id, interface)]
+        [('ip source binding %s %s vlan %s '
+         'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
     )
 
 
@@ -94,7 +94,7 @@ def _unbind_ip(ip, mac_address, vlan_id, interface):
     return (
         _configure() +
         [('no ip source binding %s %s vlan %s '
-          'interface port-channel%s') % (ip, mac_address, vlan_id, interface)]
+          'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
     )
 
 

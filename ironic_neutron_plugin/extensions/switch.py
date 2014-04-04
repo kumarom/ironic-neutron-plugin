@@ -15,8 +15,8 @@
 from neutron.api import extensions
 from neutron import wsgi
 
-from ironic_neutron_plugin.common import faults
 from ironic_neutron_plugin.db import db
+from ironic_neutron_plugin import exceptions as exc
 
 from simplejson import scanner as json_scanner
 
@@ -27,15 +27,15 @@ LOG = logging.getLogger(__name__)
 #TODO(morgabra) 'switch' is a terrible extension name
 
 EXTRA_ATTRIBUTES = {
-    'ports': {
-        'switch:portmaps': {'allow_post': False, 'allow_put': False,
-                            'validate': {'type:list': None},
-                            'is_visible': True}
+    "ports": {
+        "switch:portmaps": {"allow_post": False, "allow_put": False,
+                            "validate": {"type:list": None},
+                            "is_visible": True}
     },
-    'networks': {
-        'switch:trunked': {'allow_post': True, 'allow_put': False,
-                           'validate': {'type:boolean': None},
-                           'is_visible': True}
+    "networks": {
+        "switch:trunked": {"allow_post": True, "allow_put": False,
+                           "validate": {"type:boolean": None},
+                           "is_visible": True}
     }
 }
 
@@ -49,8 +49,8 @@ class SwitchController(wsgi.Controller):
     def show(self, request, id):
         switch = db.get_switch(id)
         if not switch:
-            raise faults.NotFound(
-                title='Switch %s not found' % (id))
+            raise exc.NotFound(
+                resource="switch %s" % (id))
         return dict(switch=switch.as_dict())
 
     def delete(self, request, id):
@@ -61,30 +61,33 @@ class SwitchController(wsgi.Controller):
         try:
             body = request.json_body
         except json_scanner.JSONDecodeError:
-            raise faults.BadRequest(title='Invalid JSON Body')
+            raise exc.BadRequest(
+                resource="switch",
+                reason="invalid JSON body")
 
         try:
-            body = body.pop('switch')
+            body = body.pop("switch")
         except KeyError:
-            raise faults.BadRequest(
-                title='Invalid JSON Body',
-                explanation='"switch" not found in request body')
+            raise exc.BadRequest(
+                resource="swtich",
+                reason="'switch' not found in request body")
 
         try:
             switch_ip = body.pop('ip')
             username = body.pop('username')
             password = body.pop('password')
             switch_type = body.pop('type')
-        except KeyError:
-            raise faults.BadRequest(
-                title='Invalid JSON Body',
-                explanation='Missing required key')
+        except KeyError as e:
+            raise exc.BadRequest(
+                resource="switch",
+                reason="missing required key: %s" % (e.message))
 
         switch = db.get_switch(switch_ip)
 
         if switch:
-            raise faults.BadRequest(
-                title='Switch %s already exists' % (switch_ip))
+            raise exc.BadRequest(
+                resource="switch",
+                reason="switch with ip %s already exists" % (switch_ip))
 
         switch = db.create_switch(switch_ip, username, password, switch_type)
         return dict(switch=switch.as_dict())
@@ -93,12 +96,14 @@ class SwitchController(wsgi.Controller):
 class PortMapController(wsgi.Controller):
 
     def index(self, request):
-        if request.GET.get('device_id'):
-            portmaps = db.filter_portmaps(
-                device_id=request.GET.get('device_id'))
-        elif request.GET.get('switch_id'):
-            portmaps = db.filter_portmaps(
-                switch_id=request.GET.get('switch_id'))
+        filters = {}
+        if request.GET.get("device_id"):
+            filters["device_id"] = request.GET.get("device_id")
+        elif request.GET.get("switch_id"):
+            filters["switch_id"] = request.GET.get("switch_id")
+
+        if filters:
+            portmaps = db.filter_portmaps(**filters)
         else:
             portmaps = db.get_all_portmaps()
         return dict(portmaps=[p.as_dict() for p in portmaps])
@@ -106,8 +111,8 @@ class PortMapController(wsgi.Controller):
     def show(self, request, id):
         portmap = db.get_portmap(id)
         if not portmap:
-            raise faults.NotFound(
-                title='PortMap %s not found' % (id))
+            raise exc.NotFound(
+                resource="portmap %s" % (id))
         return dict(portmap=portmap.as_dict())
 
     def delete(self, request, id):
@@ -118,42 +123,54 @@ class PortMapController(wsgi.Controller):
         try:
             body = request.json_body
         except json_scanner.JSONDecodeError:
-            raise faults.BadRequest(title='Invalid JSON Body')
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="invalid JSON body")
 
         try:
-            body = body.pop('portmap')
+            body = body.pop("portmap")
         except KeyError:
-            raise faults.BadRequest(
-                title='Invalid JSON Body',
-                explanation='"portmap" missing from request body')
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="'portmap' not found in request body")
 
         try:
             switch_id = body.pop('switch_id')
             device_id = body.pop('device_id')
             port = body.pop('port')
             primary = body.pop('primary')
-        except KeyError:
-            raise faults.BadRequest(
-                title='Invalid JSON Body',
-                explanation='Missing required key')
+        except KeyError as e:
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="missing required key: %s" % (e.message))
 
         switch = db.get_switch(switch_id)
 
         if not switch:
-            raise faults.BadRequest(
-                title='Switch %s does not exist' % (switch_id))
+            raise exc.NotFound(
+                resource="switch %s" % (switch_id))
+
+        # Validation - only 1 device per switchport
+        portmaps = list(db.filter_portmaps(switch_id=switch_id, port=port))
+        if len(portmaps) >= 1:
+            raise exc.BadRequest(
+                resource="portmap",
+                reason=("port already mapped to device "
+                        "'%s'" % (portmaps[0].device_id)))
 
         # Validation - max 2 portmaps and only 1 primary
         portmaps = list(db.filter_portmaps(device_id=device_id))
 
         # TODO(morgabra) Is this worth making configurable?
         if len(portmaps) > 1:
-            raise faults.BadRequest(
-                title='Not allowed more than 2 portmaps')
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="not allowed more than 2 portmaps per device")
 
         if (primary is True) and (any([p.primary for p in portmaps])):
-            raise faults.BadRequest(
-                title='Not allowed more than 1 primary portmap')
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="not allowed more than 1 primary port per device")
 
         portmap = db.create_portmap(switch_id, device_id, port, primary)
         return dict(portmap=portmap.as_dict())
@@ -184,11 +201,11 @@ class Switch(extensions.ExtensionDescriptor):
 
     def get_resources(self):
         resources = []
-        sresource = extensions.ResourceExtension('switches',
+        sresource = extensions.ResourceExtension("switches",
                                                  SwitchController())
         resources.append(sresource)
 
-        presource = extensions.ResourceExtension('portmaps',
+        presource = extensions.ResourceExtension("portmaps",
                                                  PortMapController())
         resources.append(presource)
         return resources

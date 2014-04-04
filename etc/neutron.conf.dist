@@ -8,3 +8,6 @@ fake_rabbit = True
 
 [database]
 connection = mysql://root@127.0.0.1:3306/neutron
+
+[ironic]
+dry_run = True

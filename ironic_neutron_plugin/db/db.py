@@ -62,6 +62,17 @@ def filter_portbindings_by_switch_port_ids(ids):
             filter(models.IronicPortBinding.switch_port_id.in_(ids)))
 
 
+def update_portbinding_state(port_id, network_id, switch_port_id, state):
+    session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        portbinding = (session.query(models.IronicPortBinding).
+                       get((port_id, network_id, switch_port_id)))
+        portbinding.state = state
+        session.add(portbinding)
+        session.flush()
+
+
 def delete_portbinding(port_id, network_id, switch_port_id):
     session = db_api.get_session()
 

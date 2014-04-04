@@ -15,10 +15,9 @@
 from neutron.db import api as db_api
 from neutron.db import db_base_plugin_v2
 
-from ironic_neutron_plugin.common import faults
 from ironic_neutron_plugin.db import db
-
 from ironic_neutron_plugin.drivers import manager as driver_manager
+from ironic_neutron_plugin import exceptions as exc
 
 from neutron.openstack.common import log as logging
 
@@ -37,27 +36,20 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
         self.driver_manager = driver_manager.DriverManager()
 
-        LOG.info('Ironic plugin initialized.')
+        LOG.info("Ironic plugin initialized.")
 
     def create_network(self, context, network):
         #TODO(morgabra) Actually provision vlan or whatever
+        try:
+            physical_network = network["network"]["provider:physical_network"]
+            network_type = network["network"]["provider:network_type"]
+            segmentation_id = network["network"]["provider:segmentation_id"]
+        except KeyError as e:
+            raise exc.BadRequest(
+                resource="network",
+                reason="'%s' is required" % (e.message))
 
-        physical_network = network['network'].get('provider:physical_network')
-        if not physical_network:
-            raise faults.BadRequest(
-                explanation='"provider:physical_network" is required')
-
-        network_type = network['network'].get('provider:network_type')
-        if not network_type:
-            raise faults.BadRequest(
-                explanation='"provider:network_type" is required')
-
-        segmentation_id = network['network'].get('provider:segmentation_id')
-        if not segmentation_id:
-            raise faults.BadRequest(
-                explanation='"provider:segmentation_id" is required')
-
-        trunked = network['network'].get('switch:trunked')
+        trunked = network["network"].get("switch:trunked")
 
         neutron_network = super(IronicPlugin, self).create_network(
             context, network)
@@ -80,7 +72,9 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
     def update_network(self, context, id, network):
         # TODO(morgabra) We could probably support metadata updating, but it's
         # really complicated to update a network from under a running config
-        raise faults.BadRequest(explanation='Unsupported Operation')
+        raise exc.BadRequest(
+            resource="network",
+            reason="update not supported")
 
     def get_network(self, context, id, fields=None):
         network = super(IronicPlugin, self).get_network(context, id, fields)
@@ -98,7 +92,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         info (segmentation_id, etc).
         """
         if not ironic_network:
-            ironic_network = db.get_network(neutron_network['id'])
+            ironic_network = db.get_network(neutron_network["id"])
         if ironic_network:
             neutron_network.update(ironic_network.as_dict())
         return neutron_network
@@ -112,66 +106,87 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
     def update_subnet(self, context, id, subnet):
         # TODO(morgabra) We could probably support metadata updating, but it's
         # really complicated to update a subnet from under a running config
-        raise faults.BadRequest(explanation='Unsupported Operation')
+        raise exc.BadRequest(
+            resource="subnet",
+            reason="update not supported")
 
-    def create_port(self, context, port):
-
-        network_id = port['port']['network_id']
-
-        device_id = port['port'].get('device_id')
-        if not device_id:
-            raise faults.BadRequest(
-                explanation='"device_id" is required')
-
-        mac_address = port['port'].get('mac_address')
-        if isinstance(mac_address, basestring):
-            raise faults.BadRequest(
-                explanation='"mac_address" is not allowed')
-
-        ironic_network = db.get_network(network_id)
-
-        if not ironic_network:
-            msg = "No ironic network found for network %s" % (network_id)
-            raise faults.BadRequest(explanation=msg)
-
+    def _get_ironic_ports(self, device_id, ironic_network):
+        """Fetch and validate relevant switchports for a given device_id
+        suitable for attaching to the given ironic network.
+        """
+        # if trunked we will configure all ports, if access only the primary.
         if ironic_network.trunked:
-            ironic_ports = list(db.filter_portmaps(device_id=device_id))
+            ironic_ports = list(db.filter_portmaps(
+                device_id=device_id))
         else:
             ironic_ports = list(db.filter_portmaps(
                 device_id=device_id, primary=True))
 
         if len(ironic_ports) < 1:
-            msg = 'No suitable portmap(s) for device "%s" found' % (device_id)
-            raise faults.BadRequest(explanation=msg)
+            msg = "No suitable portmap(s) for device '%s' found" % (device_id)
+            raise exc.BadRequest(
+                resource="port",
+                reason=msg)
 
-        # fetch all existing active networks on this port
+        # Fetch all existing networks we are attached to.
         portbindings = list(db.filter_portbindings_by_switch_port_ids(
             [p.id for p in ironic_ports]))
         bound_network_ids = [pb.network_id for pb in portbindings]
 
+        # We can't attach to a non-trunked network if the port is already
+        # attached to another network.
         if bound_network_ids and (ironic_network.trunked is False):
-            msg = ('Cannot attach non-trunked network, port '
-                   'already bound to network(s) %s' % (bound_network_ids))
-            raise faults.BadRequest(explanation=msg)
+            msg = ("Cannot attach non-trunked network, port "
+                   "already bound to network(s) %s" % (bound_network_ids))
+            raise exc.BadRequest(
+                resource="port",
+                reason=msg)
 
         for bound_network_id in bound_network_ids:
 
-            # Validate we aren't already attached to this network
-            if network_id == bound_network_id:
-                msg = 'Already attached to network %s' % (network_id)
-                raise faults.BadRequest(explanation=msg)
+            # We can't attach to the same network again.
+            if ironic_network.network_id == bound_network_id:
+                msg = ("Already attached to "
+                       "network %s" % (ironic_network.network_id))
+                raise exc.BadRequest(
+                    resource="port",
+                    reason=msg)
 
-            # Validate this port has only other trunked networks attached
+            # We can't attach a trunked network if we are already attached
+            # to a non-trunked network.
             bound_network = db.get_network(bound_network_id)
             if not bound_network.trunked:
-                raise faults.BadRequest(
-                    explanation=('Already attached to non-trunked '
-                                 'network %s' % (bound_network_id)))
+                msg = ("Already attached to non-trunked "
+                       "network %s" % (bound_network_id))
+                raise exc.BadRequest(
+                    resource="port",
+                    reason=msg)
+
+        return ironic_ports
+
+    def create_port(self, context, port):
+
+        device_id = port["port"].get("device_id")
+        if not device_id:
+            raise exc.BadRequest(
+                resource="port",
+                reason="'device_id' is required")
+
+        network_id = port["port"]["network_id"]
+        ironic_network = db.get_network(network_id)
+
+        if not ironic_network:
+            msg = "No ironic network found for network %s" % (network_id)
+            raise exc.BadRequest(
+                resource="port",
+                reason=msg)
+
+        ironic_ports = self._get_ironic_ports(device_id, ironic_network)
 
         port = super(IronicPlugin, self).create_port(context, port)
         self._add_port_data(port, ironic_ports)
 
-        self.driver_manager.attach(port, ironic_ports, ironic_network.trunked)
+        self.driver_manager.attach(port, ironic_network, ironic_ports)
         return port
 
     def delete_port(self, context, id):
@@ -179,13 +194,14 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         ironic_ports = list(db.filter_portmaps(device_id=port['device_id']))
 
         ironic_network = db.get_network(port['network_id'])
-        trunked = ironic_network.trunked
 
-        self.driver_manager.detach(port, ironic_ports, trunked)
+        self.driver_manager.detach(port, ironic_network, ironic_ports)
         return super(IronicPlugin, self).delete_port(context, id)
 
     def update_port(self, context, id, port):
-        raise faults.BadRequest(explanation='Unsupported Operation')
+        raise exc.BadRequest(
+            resource="port",
+            reason="update not supported")
 
     def get_port(self, context, id, fields=None):
         port = super(IronicPlugin, self).get_port(context, id, fields)
@@ -205,7 +221,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         """
         if not ironic_ports:
             ironic_ports = db.filter_portmaps(
-                device_id=neutron_port['device_id'])
+                device_id=neutron_port["device_id"])
         ironic_ports = [p.as_dict() for p in ironic_ports]
-        neutron_port.update({'switch:portmaps': ironic_ports})
+        neutron_port.update({"switch:portmaps": ironic_ports})
         return neutron_port

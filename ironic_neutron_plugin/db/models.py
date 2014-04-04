@@ -28,7 +28,7 @@ class IronicSwitchPort(model_base.BASEV2):
 
     id = sa.Column(sa.Integer, primary_key=True, autoincrement=True)
 
-    switch_id = sa.Column(sa.Integer, sa.ForeignKey('ironic_switches.id'))
+    switch_id = sa.Column(sa.Integer, sa.ForeignKey("ironic_switches.id"))
     # ironic chassis id
     device_id = sa.Column(sa.String(255), index=True)
     # switch port number: <1-n>
@@ -38,24 +38,24 @@ class IronicSwitchPort(model_base.BASEV2):
 
     def as_dict(self):
         return {
-            'id': self.id,
-            'switch_id': self.switch_id,
-            'device_id': self.device_id,
-            'port': self.port,
-            'primary': self.primary
+            "id": self.id,
+            "switch_id": self.switch_id,
+            "device_id": self.device_id,
+            "port": self.port,
+            "primary": self.primary
         }
 
 
 class IronicSwitchType(object):
 
-    cisco = 'cisco'
-    arista = 'arista'
+    cisco = "cisco"
+    arista = "arista"
 
     @classmethod
     def as_dict(cls):
         return {
-            'cisco': cls.cisco,
-            'arista': cls.arista
+            "cisco": cls.cisco,
+            "arista": cls.arista
         }
 
 
@@ -73,15 +73,15 @@ class IronicSwitch(model_base.BASEV2):
     # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
     switch_ports = sa_orm.relationship(
-        'IronicSwitchPort', cascade='all,delete', backref='switch')
+        "IronicSwitchPort", cascade="all,delete", backref="switch")
 
     def as_dict(self):
         return {
-            'id': self.id,
-            'ip': self.ip,
-            'username': self.username,
-            'password': '******',
-            'type': self.type
+            "id": self.id,
+            "ip": self.ip,
+            "username": self.username,
+            "password": '******',
+            "type": self.type
         }
 
 
@@ -94,9 +94,7 @@ class IronicNetwork(model_base.BASEV2):
     physical_network = sa.Column(sa.String(255))
     segmentation_id = sa.Column(sa.Integer)
     network_type = sa.Column(sa.String(255))
-    # TODO(morgabra) We need to know if a particular network should
-    # use a trunked config or not, not sure if this is the best way
-    # to accomplish this.
+    # TODO(morgbara) is this the best place to store this information?
     trunked = sa.Column(sa.Boolean)
 
     def as_dict(self):
@@ -108,15 +106,26 @@ class IronicNetwork(model_base.BASEV2):
         }
 
 
+class IronicPortBindingState(object):
+    """PortBinding states:
+
+    CREATED: Configuration is not active on the switch
+             but we want it to be
+    ACTIVE: Configuration is running on the switch
+    DELETED: Configuration is running on the switch
+             but we want it removed
+    """
+    CREATED = 'CREATED'
+    ACTIVE = 'ACTIVE'
+    DELETED = 'DELETED'
+
+
 class IronicPortBinding(model_base.BASEV2):
     """Keep track of active switch configurations.
 
-    TODO(morgabra) This keeps switch config state in neutron.
-    In general, if there is an entry here then the configuration is running
-    on the switch. There are many problems with this plan.
-
-    TODO(morgabra) Ideally we implement config validation and purge/sync
-    utilities which should let us get away without keeping any state?
+    TODO(morgabra) We should be able to figure out how to
+    recover a failed binding based on the portbinding state.
+    We still need to write that recovery code/scripts.
     """
 
     __tablename__ = "ironic_port_bindings"
@@ -125,11 +134,13 @@ class IronicPortBinding(model_base.BASEV2):
     port_id = sa.Column(sa.String(255), primary_key=True)
     network_id = sa.Column(sa.String(255), primary_key=True)
     switch_port_id = sa.Column(
-        sa.Integer, sa.ForeignKey('ironic_switch_ports.id'), primary_key=True)
+        sa.Integer, sa.ForeignKey("ironic_switch_ports.id"), primary_key=True)
+    state = sa.Column(sa.String(255), default=IronicPortBindingState.CREATED)
 
     def as_dict(self):
         return {
             "port_id": self.port_id,
             "network_id": self.network_id,
-            "switch_port_id": self.switch_port_id
+            "switch_port_id": self.switch_port_id,
+            "state": self.state
         }

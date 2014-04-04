@@ -21,7 +21,7 @@ This is lifted partially from the cisco ml2 mechanism.
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
-from ironic_neutron_plugin.db import db
+from ironic_neutron_plugin import config
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
 
@@ -35,82 +35,82 @@ class CiscoException(base_driver.DriverException):
 class CiscoDriver(base_driver.Driver):
 
     def __init__(self):
+        self.dry_run = config.get_ironic_config().dry_run
         self.ncclient = None
 
-    def _get_vlan_id(self, neutron_port):
-        network_id = neutron_port['network_id']
-        network = db.get_network(network_id)
-        return network.segmentation_id
+    def create(self, port):
 
-    def _get_ip(self, neutron_port):
-        ips = neutron_port['fixed_ips']
-        if len(ips) != 1:
-            raise CiscoException(
-                ('More than 1 IP assigned to port %s,'
-                 ' bailing out.' % (neutron_port['id'])))
-        return ips[0]['ip_address']
+        LOG.debug("Creating port %s for device %s"
+                  % (port.interface, port.device_id))
+        LOG.debug("Attaching vlan %s to interface %s"
+                  % (port.vlan_id, port.interface))
 
-    def _get_port_bindings(self, switch_port):
-        # get existing port bindings
-        return list(db.filter_portbindings(switch_port_id=switch_port['id']))
+        cmds = commands.create_port(
+            device_id=port.device_id,
+            interface=port.interface,
+            vlan_id=port.vlan_id,
+            ip=port.ip,
+            mac_address=port.mac_address,
+            trunked=port.trunked)
 
-    def attach(self, neutron_port, switch_port, trunked):
+        self._run_commands(
+            port.switch_ip,
+            port.switch_username,
+            port.switch_password,
+            cmds)
 
-        vlan_id = self._get_vlan_id(neutron_port)
-        ip = self._get_ip(neutron_port)
+    def delete(self, port):
 
-        # TODO(morgabra) We should move this logic out to the manager probably,
-        # and have drivers implement create() and attach()/detach() separately.
-        port_bindings = self._get_port_bindings(switch_port)
+        LOG.debug("Deleting port %s for device %s"
+                  % (port.interface, port.device_id))
 
-        if not len(port_bindings):
-            LOG.debug('No existing bindings, creating new configuration')
-            self._run_commands(switch_port, commands.create_port(
-                device_id=switch_port['device_id'],
-                interface=switch_port['port'],
-                vlan_id=vlan_id,
-                ip=ip,
-                mac_address=neutron_port['mac_address'],
-                trunked=trunked))
-        else:
-            LOG.debug('Existing bindings, adding vlan')
-            self._run_commands(switch_port, commands.add_vlan(
-                interface=switch_port['port'],
-                vlan_id=vlan_id,
-                ip=ip,
-                mac_address=neutron_port['mac_address'],
-                trunked=trunked))
+        cmds = commands.delete_port(
+            interface=port.interface,
+            vlan_id=port.vlan_id,
+            trunked=port.trunked)
 
-    def detach(self, neutron_port, switch_port, trunked):
-        vlan_id = self._get_vlan_id(neutron_port)
-        ip = self._get_ip(neutron_port)
+        self.detach(port)
+        self._run_commands(
+            port.switch_ip,
+            port.switch_username,
+            port.switch_password,
+            cmds)
 
-        port_bindings = self._get_port_bindings(switch_port)
+    def attach(self, port):
 
-        try:
-            if not len(port_bindings):
-                msg = 'No portbindings found for given port, doing nothing...'
-                LOG.error(msg)
-                return
+        LOG.debug("Attaching vlan %s to interface %s"
+                  % (port.vlan_id, port.interface))
 
-            self._run_commands(switch_port, commands.remove_vlan(
-                interface=switch_port['port'],
-                vlan_id=vlan_id,
-                ip=ip,
-                mac_address=neutron_port['mac_address'],
-                trunked=trunked))
+        cmds = commands.add_vlan(
+            interface=port.interface,
+            vlan_id=port.vlan_id,
+            ip=port.ip,
+            mac_address=port.mac_address,
+            trunked=port.trunked)
 
-            if len(port_bindings) == 1:
-                LOG.debug('Last binding for port, shutting down ports...')
-                self._run_commands(switch_port, commands.delete_port(
-                    interface=switch_port['port'],
-                    vlan_id=vlan_id,
-                    trunked=trunked))
+        self._run_commands(
+            port.switch_ip,
+            port.switch_username,
+            port.switch_password,
+            cmds)
 
-        except CiscoException as e:
-            #TODO(morgabra) We can ignore some classes of errors, but not all
-            LOG.error("Failed detatch!")
-            LOG.error(e)
+    def detach(self, port):
+
+        LOG.debug("Detaching vlan %s from interface %s"
+                  % (port.vlan_id, port.interface))
+
+        cmds = commands.remove_vlan(
+            interface=port.interface,
+            vlan_id=port.vlan_id,
+            ip=port.ip,
+            mac_address=port.mac_address,
+            trunked=port.trunked)
+
+        self._run_commands(
+            port.switch_ip,
+            port.switch_username,
+            port.switch_password,
+            cmds)
 
     def _import_ncclient(self):
         """Import the NETCONF client (ncclient) module.
@@ -123,10 +123,14 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
-    def _run_commands(self, switch_port, commands):
+    def _run_commands(self, ip, username, password, commands):
 
-        # TODO(morgabra) debug mode, only log commands
-        conn = self._connect(switch_port.switch)
+        if self.dry_run:
+            LOG.debug("Dry run is enabled, would have "
+                      "executed commands: %s" % (commands))
+            return
+
+        conn = self._connect(ip, username, password)
         try:
             LOG.debug("Executing commands: %s" % (commands))
 
@@ -134,16 +138,12 @@ class CiscoDriver(base_driver.Driver):
         except Exception as e:
             raise CiscoException(e)
 
-    def _connect(self, switch):
+    def _connect(self, ip, username, password, port=22):
         if not self.ncclient:
             self.ncclient = self._import_ncclient()
 
-        host = switch.ip
-        port = 22  # TODO(morgabra) Add to switch model
-        username = switch.username
-        password = switch.password
         try:
-            return self.ncclient.connect(host=host,
+            return self.ncclient.connect(host=ip,
                                          port=port,
                                          username=username,
                                          password=password)

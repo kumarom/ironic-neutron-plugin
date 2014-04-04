@@ -11,3 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from webob import exc
+
+
+class BadRequest(exc.HTTPBadRequest):
+
+    code = 400
+    explanation = "Invalid %(resource)s request: %(reason)s"
+
+    def __init__(self, **kwargs):
+        self.explanation = self.explanation % (kwargs)
+        super(BadRequest, self).__init__()
+
+
+class NotFound(BadRequest):
+    code = 404
+    title = "Not Found"
+    explanation = "%(resource)s not found"
