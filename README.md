@@ -36,14 +36,8 @@ Run Neutron Server
 ------------------
 ```
 # see scripts/neutron-server.sh for an example
-neutron-server --config-dir /path/to/neutron/etc/ --config-file /path/to/plugin/etc/neutron.conf
+neutron-server --config-file /path/to/plugin/etc/neutron.conf
 ```
-
-Deployment
-==========
-1. Install neutron however you might do that in a production setting
-2. Make ironic-neutron-plugin available on your pythonpath
-3. Edit neutron.conf/core_plugin (see 'Development')
 
 API
 ===
