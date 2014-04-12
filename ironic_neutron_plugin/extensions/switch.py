@@ -57,7 +57,6 @@ class SwitchController(wsgi.Controller):
         db.delete_switch(id)
 
     def create(self, request):
-
         try:
             body = request.json_body
         except json_scanner.JSONDecodeError:
@@ -81,13 +80,6 @@ class SwitchController(wsgi.Controller):
             raise exc.BadRequest(
                 resource="switch",
                 reason="missing required key: %s" % (e.message))
-
-        switch = db.get_switch(switch_ip)
-
-        if switch:
-            raise exc.BadRequest(
-                resource="switch",
-                reason="switch with ip %s already exists" % (switch_ip))
 
         switch = db.create_switch(switch_ip, username, password, switch_type)
         return dict(switch=switch.as_dict())

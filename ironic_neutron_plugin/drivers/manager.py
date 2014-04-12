@@ -25,6 +25,7 @@ LOG = logging.getLogger(__name__)
 # TODO(morgabra) proper driver loading mechanism
 DRIVER_MAP = {
     models.IronicSwitchType.cisco: cisco_driver.CiscoDriver,
+    'dummy': base_driver.DummyDriver
 }
 
 

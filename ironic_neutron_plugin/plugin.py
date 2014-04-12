@@ -16,10 +16,12 @@ from neutron.db import api as db_api
 from neutron.db import db_base_plugin_v2
 
 from ironic_neutron_plugin.db import db
-from ironic_neutron_plugin.drivers import manager as driver_manager
-from ironic_neutron_plugin import exceptions as exc
+from ironic_neutron_plugin.drivers import manager
 
+from neutron.common import exceptions as n_exc
 from neutron.openstack.common import log as logging
+
+import six
 
 LOG = logging.getLogger(__name__)
 
@@ -27,6 +29,8 @@ LOG = logging.getLogger(__name__)
 class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
     __native_bulk_support = False
+    __native_pagination_support = False
+    __native_sorting_support = True
 
     supported_extension_aliases = ["provider", "switch"]
 
@@ -34,47 +38,67 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         super(IronicPlugin, self).__init__()
         db_api.configure_db()
 
-        self.driver_manager = driver_manager.DriverManager()
+        self.driver_manager = manager.DriverManager()
 
         LOG.info("Ironic plugin initialized.")
 
+    def _validate_network_extensions(self, network):
+
+        physical_network = network["network"].get("provider:physical_network")
+        if not isinstance(physical_network, six.string_types):
+            raise n_exc.BadRequest(
+                resource="network",
+                msg="'provider:physical_network' is required")
+
+        network_type = network["network"].get("provider:network_type")
+        if not isinstance(network_type, six.string_types):
+            raise n_exc.BadRequest(
+                resource="network",
+                msg="'provider:network_type' is required")
+
+        segmentation_id = network["network"].get("provider:segmentation_id")
+        if not isinstance(segmentation_id, six.integer_types):
+            raise n_exc.BadRequest(
+                resource="network",
+                msg="'provider:segmentation_id' is required")
+
+        trunked = bool(network["network"].get("switch:trunked"))
+
+        return {
+            "physical_network": physical_network,
+            "network_type": network_type,
+            "segmentation_id": segmentation_id,
+            "trunked": trunked
+        }
+
     def create_network(self, context, network):
         #TODO(morgabra) Actually provision vlan or whatever
-        try:
-            physical_network = network["network"]["provider:physical_network"]
-            network_type = network["network"]["provider:network_type"]
-            segmentation_id = network["network"]["provider:segmentation_id"]
-        except KeyError as e:
-            raise exc.BadRequest(
-                resource="network",
-                reason="'%s' is required" % (e.message))
 
-        trunked = network["network"].get("switch:trunked")
+        # Parse out and validate all the network extension data we
+        # expect to see.
+        network_extension_data = self._validate_network_extensions(
+            network)
 
         neutron_network = super(IronicPlugin, self).create_network(
             context, network)
 
         ironic_network = db.create_network(
             neutron_network['id'],
-            physical_network=physical_network,
-            network_type=network_type,
-            segmentation_id=segmentation_id,
-            trunked=bool(trunked)
+            **network_extension_data
         )
         return self._add_network_data(neutron_network, ironic_network)
 
     def delete_network(self, context, id):
         # TODO(morgabra) What does this mean? Iterate over every switch
         # and remove the relevant vlan?
+        res = super(IronicPlugin, self).delete_network(context, id)
         db.delete_network(id)
-        return super(IronicPlugin, self).delete_network(context, id)
+        return res
 
     def update_network(self, context, id, network):
-        # TODO(morgabra) We could probably support metadata updating, but it's
-        # really complicated to update a network from under a running config
-        raise exc.BadRequest(
+        raise n_exc.BadRequest(
             resource="network",
-            reason="update not supported")
+            msg="update not supported")
 
     def get_network(self, context, id, fields=None):
         network = super(IronicPlugin, self).get_network(context, id, fields)
@@ -104,11 +128,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         return super(IronicPlugin, self).delete_subnet(context, id)
 
     def update_subnet(self, context, id, subnet):
-        # TODO(morgabra) We could probably support metadata updating, but it's
-        # really complicated to update a subnet from under a running config
-        raise exc.BadRequest(
-            resource="subnet",
-            reason="update not supported")
+        return super(IronicPlugin, self).update_subnet(context, id, subnet)
 
     def _get_ironic_ports(self, device_id, ironic_network):
         """Fetch and validate relevant switchports for a given device_id
@@ -124,9 +144,9 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
         if len(ironic_ports) < 1:
             msg = "No suitable portmap(s) for device '%s' found" % (device_id)
-            raise exc.BadRequest(
+            raise n_exc.BadRequest(
                 resource="port",
-                reason=msg)
+                msg=msg)
 
         # Fetch all existing networks we are attached to.
         portbindings = list(db.filter_portbindings_by_switch_port_ids(
@@ -138,9 +158,9 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         if bound_network_ids and (ironic_network.trunked is False):
             msg = ("Cannot attach non-trunked network, port "
                    "already bound to network(s) %s" % (bound_network_ids))
-            raise exc.BadRequest(
+            raise n_exc.BadRequest(
                 resource="port",
-                reason=msg)
+                msg=msg)
 
         for bound_network_id in bound_network_ids:
 
@@ -148,9 +168,9 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
             if ironic_network.network_id == bound_network_id:
                 msg = ("Already attached to "
                        "network %s" % (ironic_network.network_id))
-                raise exc.BadRequest(
+                raise n_exc.BadRequest(
                     resource="port",
-                    reason=msg)
+                    msg=msg)
 
             # We can't attach a trunked network if we are already attached
             # to a non-trunked network.
@@ -158,9 +178,9 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
             if not bound_network.trunked:
                 msg = ("Already attached to non-trunked "
                        "network %s" % (bound_network_id))
-                raise exc.BadRequest(
+                raise n_exc.BadRequest(
                     resource="port",
-                    reason=msg)
+                    msg=msg)
 
         return ironic_ports
 
@@ -168,18 +188,18 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
         device_id = port["port"].get("device_id")
         if not device_id:
-            raise exc.BadRequest(
+            raise n_exc.BadRequest(
                 resource="port",
-                reason="'device_id' is required")
+                msg="'device_id' is required")
 
         network_id = port["port"]["network_id"]
         ironic_network = db.get_network(network_id)
 
         if not ironic_network:
             msg = "No ironic network found for network %s" % (network_id)
-            raise exc.BadRequest(
+            raise n_exc.BadRequest(
                 resource="port",
-                reason=msg)
+                msg=msg)
 
         ironic_ports = self._get_ironic_ports(device_id, ironic_network)
 
@@ -199,9 +219,9 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
         return super(IronicPlugin, self).delete_port(context, id)
 
     def update_port(self, context, id, port):
-        raise exc.BadRequest(
+        raise n_exc.BadRequest(
             resource="port",
-            reason="update not supported")
+            msg="update not supported")
 
     def get_port(self, context, id, fields=None):
         port = super(IronicPlugin, self).get_port(context, id, fields)

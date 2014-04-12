@@ -26,7 +26,7 @@ class IronicSwitchPort(model_base.BASEV2):
 
     __tablename__ = "ironic_switch_ports"
 
-    id = sa.Column(sa.Integer, primary_key=True, autoincrement=True)
+    id = sa.Column(sa.String(255), primary_key=True)
 
     switch_id = sa.Column(sa.Integer, sa.ForeignKey("ironic_switches.id"))
     # ironic chassis id
@@ -64,7 +64,7 @@ class IronicSwitch(model_base.BASEV2):
 
     __tablename__ = "ironic_switches"
 
-    id = sa.Column(sa.Integer, primary_key=True, autoincrement=True)
+    id = sa.Column(sa.String(255), primary_key=True)
 
     ip = sa.Column(sa.String(255))
     username = sa.Column(sa.String(255))

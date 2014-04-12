@@ -16,8 +16,10 @@ from sqlalchemy import orm
 
 from neutron.db import api as db_api
 from neutron.openstack.common import log as logging
+from neutron.openstack.common import uuidutils
 
 from ironic_neutron_plugin.db import models
+
 
 LOG = logging.getLogger(__name__)
 
@@ -91,6 +93,7 @@ def create_portmap(switch_id, device_id, port, primary):
 
     with session.begin(subtransactions=True):
         portmap = models.IronicSwitchPort(
+            id=uuidutils.generate_uuid(),
             switch_id=switch_id,
             device_id=device_id,
             port=port,
@@ -136,6 +139,7 @@ def create_switch(switch_ip, username, password, switch_type):
 
     with session.begin(subtransactions=True):
         switch = models.IronicSwitch(
+            id=uuidutils.generate_uuid(),
             ip=switch_ip,
             username=username,
             password=password,
@@ -155,7 +159,6 @@ def get_switch(switch_id):
 
 
 def filter_switches(**kwargs):
-
     session = db_api.get_session()
     return (session.query(models.IronicSwitch).
             filter_by(**kwargs))
@@ -177,6 +180,11 @@ def delete_switch(switch_id):
     session.delete(switch)
     session.flush()
     return True
+
+
+def get_all_networks():
+    session = db_api.get_session()
+    return (session.query(models.IronicNetwork).all())
 
 
 def get_network(network_id):

@@ -70,3 +70,18 @@ class PortInfo(object):
         self.ip = ip
         self.mac_address = mac_address
         self.trunked = trunked
+
+
+class DummyDriver(Driver):
+
+    def create(self, port_info):
+        pass
+
+    def delete(self, port_info):
+        pass
+
+    def attach(self, port_info):
+        pass
+
+    def detach(self, port_info):
+        pass
