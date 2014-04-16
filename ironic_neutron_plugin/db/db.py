@@ -16,7 +16,6 @@ from sqlalchemy import orm
 
 from neutron.db import api as db_api
 from neutron.openstack.common import log as logging
-from neutron.openstack.common import uuidutils
 
 from ironic_neutron_plugin.db import models
 
@@ -93,7 +92,6 @@ def create_portmap(switch_id, device_id, port, primary):
 
     with session.begin(subtransactions=True):
         portmap = models.IronicSwitchPort(
-            id=uuidutils.generate_uuid(),
             switch_id=switch_id,
             device_id=device_id,
             port=port,
@@ -139,7 +137,6 @@ def create_switch(switch_ip, username, password, switch_type):
 
     with session.begin(subtransactions=True):
         switch = models.IronicSwitch(
-            id=uuidutils.generate_uuid(),
             ip=switch_ip,
             username=username,
             password=password,

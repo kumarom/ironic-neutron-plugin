@@ -16,19 +16,20 @@ import sqlalchemy as sa
 from sqlalchemy import orm as sa_orm
 
 from neutron.db import model_base
+from neutron.db import models_v2
 from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 
 
-class IronicSwitchPort(model_base.BASEV2):
+class IronicSwitchPort(model_base.BASEV2, models_v2.HasId):
     """Maps a device to a physical switch port."""
 
     __tablename__ = "ironic_switch_ports"
 
-    id = sa.Column(sa.String(255), primary_key=True)
-
-    switch_id = sa.Column(sa.Integer, sa.ForeignKey("ironic_switches.id"))
+    switch_id = sa.Column(sa.String(36),
+                          sa.ForeignKey("ironic_switches.id"),
+                          nullable=False)
     # ironic chassis id
     device_id = sa.Column(sa.String(255), index=True)
     # switch port number: <1-n>
@@ -50,21 +51,21 @@ class IronicSwitchType(object):
 
     cisco = "cisco"
     arista = "arista"
+    dummy = "dummy"
 
     @classmethod
     def as_dict(cls):
         return {
             "cisco": cls.cisco,
-            "arista": cls.arista
+            "arista": cls.arista,
+            "dummy": cls.dummy
         }
 
 
-class IronicSwitch(model_base.BASEV2):
+class IronicSwitch(model_base.BASEV2, models_v2.HasId):
     """A physical switch and admin credentials."""
 
     __tablename__ = "ironic_switches"
-
-    id = sa.Column(sa.String(255), primary_key=True)
 
     ip = sa.Column(sa.String(255))
     username = sa.Column(sa.String(255))
@@ -73,7 +74,7 @@ class IronicSwitch(model_base.BASEV2):
     # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
     switch_ports = sa_orm.relationship(
-        "IronicSwitchPort", cascade="all,delete", backref="switch")
+        IronicSwitchPort, cascade="delete", backref="switch")
 
     def as_dict(self):
         return {
@@ -134,8 +135,11 @@ class IronicPortBinding(model_base.BASEV2):
     port_id = sa.Column(sa.String(255), primary_key=True)
     network_id = sa.Column(sa.String(255), primary_key=True)
     switch_port_id = sa.Column(
-        sa.Integer, sa.ForeignKey("ironic_switch_ports.id"), primary_key=True)
-    state = sa.Column(sa.String(255), default=IronicPortBindingState.CREATED)
+        sa.String(36),
+        sa.ForeignKey("ironic_switch_ports.id"),
+        primary_key=True)
+    state = sa.Column(sa.String(255),
+                      default=IronicPortBindingState.CREATED)
 
     def as_dict(self):
         return {
