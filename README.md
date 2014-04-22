@@ -128,7 +128,7 @@ Default neutron port object. We require mac_address and device_id be set so we c
 
 #### Create
 
-```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "<device_id>"}}'```
+```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "device", "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
 
 #### Read
 

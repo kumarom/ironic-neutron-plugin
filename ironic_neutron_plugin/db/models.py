@@ -39,31 +39,35 @@ class IronicSwitchPort(model_base.BASEV2, models_v2.HasId):
 
     def as_dict(self):
         return {
-            "id": self.id,
-            "switch_id": self.switch_id,
-            "device_id": self.device_id,
-            "port": self.port,
-            "primary": self.primary
+            u"id": self.id,
+            u"switch_id": self.switch_id,
+            u"device_id": self.device_id,
+            u"port": self.port,
+            u"primary": self.primary
         }
 
 
 class IronicSwitchType(object):
 
-    cisco = "cisco"
-    arista = "arista"
-    dummy = "dummy"
+    cisco = u"cisco"
+    arista = u"arista"
+    dummy = u"dummy"
 
     @classmethod
     def as_dict(cls):
         return {
-            "cisco": cls.cisco,
-            "arista": cls.arista,
-            "dummy": cls.dummy
+            u"cisco": cls.cisco,
+            u"arista": cls.arista,
+            u"dummy": cls.dummy
         }
 
 
 class IronicSwitch(model_base.BASEV2, models_v2.HasId):
-    """A physical switch and admin credentials."""
+    """A physical switch and admin credentials.
+
+    TODO(morgabra) We probably want to assign an id to a switch, maybe
+    whatever LLDP returns?
+    """
 
     __tablename__ = "ironic_switches"
 
@@ -78,11 +82,11 @@ class IronicSwitch(model_base.BASEV2, models_v2.HasId):
 
     def as_dict(self):
         return {
-            "id": self.id,
-            "ip": self.ip,
-            "username": self.username,
-            "password": '******',
-            "type": self.type
+            u"id": self.id,
+            u"ip": self.ip,
+            u"username": self.username,
+            u"password": u'******',
+            u"type": self.type
         }
 
 
@@ -100,10 +104,10 @@ class IronicNetwork(model_base.BASEV2):
 
     def as_dict(self):
         return {
-            "provider:physical_network": self.physical_network,
-            "provider:segmentation_id": self.segmentation_id,
-            "provider:network_type": self.network_type,
-            "switch:trunked": self.trunked
+            u"provider:physical_network": self.physical_network,
+            u"provider:segmentation_id": self.segmentation_id,
+            u"provider:network_type": self.network_type,
+            u"switch:trunked": self.trunked
         }
 
 
@@ -116,9 +120,9 @@ class IronicPortBindingState(object):
     DELETED: Configuration is running on the switch
              but we want it removed
     """
-    CREATED = 'CREATED'
-    ACTIVE = 'ACTIVE'
-    DELETED = 'DELETED'
+    CREATED = u'CREATED'
+    ACTIVE = u'ACTIVE'
+    DELETED = u'DELETED'
 
 
 class IronicPortBinding(model_base.BASEV2):
@@ -143,8 +147,8 @@ class IronicPortBinding(model_base.BASEV2):
 
     def as_dict(self):
         return {
-            "port_id": self.port_id,
-            "network_id": self.network_id,
-            "switch_port_id": self.switch_port_id,
-            "state": self.state
+            u"port_id": self.port_id,
+            u"network_id": self.network_id,
+            u"switch_port_id": self.switch_port_id,
+            u"state": self.state
         }

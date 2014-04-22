@@ -17,6 +17,7 @@ from neutron.db import db_base_plugin_v2
 
 from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.drivers import manager
+from ironic_neutron_plugin.extensions import switch
 
 from neutron.common import exceptions as n_exc
 from neutron.openstack.common import log as logging
@@ -130,10 +131,20 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
     def update_subnet(self, context, id, subnet):
         return super(IronicPlugin, self).update_subnet(context, id, subnet)
 
-    def _get_ironic_ports(self, device_id, ironic_network):
+    def _get_ironic_ports(self, port, ironic_network):
         """Fetch and validate relevant switchports for a given device_id
         suitable for attaching to the given ironic network.
+
+        TODO(morgabra) This is horrible: it's a nice feature to be able to
+        specify portmaps with the create_port() request but it conflicts with
+        pre-setting the portmaps via the switch extension, resulting in 2 code
+        paths for pretty much the same thing.
         """
+        LOG.info(
+            'Fetching portmaps for device %s' % (port["port"]["device_id"]))
+
+        device_id = port["port"]["device_id"]
+
         # if trunked we will configure all ports, if access only the primary.
         if ironic_network.trunked:
             ironic_ports = list(db.filter_portmaps(
@@ -142,11 +153,70 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
             ironic_ports = list(db.filter_portmaps(
                 device_id=device_id, primary=True))
 
-        if len(ironic_ports) < 1:
-            msg = "No suitable portmap(s) for device '%s' found" % (device_id)
+        if not ironic_ports:
+            # create portmaps
+            ironic_ports = self._create_ironic_ports(port, ironic_network)
+        else:
+            # if we are given portmaps in the request but some already exist
+            # in the db, assert that they match
+            portmaps = port["port"]["switch:portmaps"]
+            for pm in portmaps:
+                pm["device_id"] = device_id
+
+            if portmaps:
+                for p in ironic_ports:
+                    p = p.as_dict()
+                    p.pop('id')
+                    if p not in portmaps:
+                        portmap_ids = ','.join(
+                            [pm.id for pm in ironic_ports])
+                        msg = (
+                            "Given portmap(s) do not match existing "
+                            "portmap(s) with id(s): %s" % (portmap_ids)
+                        )
+                        raise n_exc.BadRequest(
+                            resource="port",
+                            msg=msg)
+
+        return self._validate_ironic_ports(ironic_ports, port, ironic_network)
+
+    def _create_ironic_ports(self, port, ironic_network):
+
+        device_id = port["port"]["device_id"]
+        LOG.info('Creating portmaps for device %s' % (device_id))
+
+        portmaps = port["port"]["switch:portmaps"]
+
+        # You may only have a maximum of 2 portmaps
+        # TODO(morgabra) Limiting to 2 is probably not necessary
+        if len(portmaps) > 2:
+            msg = ("A maximum of 2 portmaps are allowed, "
+                   "%s given" % (len(portmaps)))
             raise n_exc.BadRequest(
                 resource="port",
                 msg=msg)
+
+        # You may only have 1 primary portmap
+        is_primary = set([pm["primary"] for pm in portmaps])
+        if (len(is_primary) != len(portmaps)) or (True not in is_primary):
+            msg = ("Exactly 1 portmap must be primary")
+            raise n_exc.BadRequest(
+                resource="port",
+                msg=msg)
+
+        # TODO(morgabra) - This is gross. We should probably move
+        # the validation in the method to db.create_portmap() instead,
+        # which would stop us from using a classmethod of another random
+        # controller.
+        new_portmaps = []
+        for p in portmaps:
+            p["device_id"] = device_id
+            portmap = switch.PortMapController.create_portmap(p)
+            new_portmaps.append(portmap)
+
+        return new_portmaps
+
+    def _validate_ironic_ports(self, ironic_ports, port, ironic_network):
 
         # Fetch all existing networks we are attached to.
         portbindings = list(db.filter_portbindings_by_switch_port_ids(
@@ -201,7 +271,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
                 resource="port",
                 msg=msg)
 
-        ironic_ports = self._get_ironic_ports(device_id, ironic_network)
+        ironic_ports = self._get_ironic_ports(port, ironic_network)
 
         port = super(IronicPlugin, self).create_port(context, port)
         self._add_port_data(port, ironic_ports)

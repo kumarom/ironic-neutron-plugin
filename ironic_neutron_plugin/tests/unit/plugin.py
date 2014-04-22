@@ -49,7 +49,7 @@ class IronicPluginTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
     def tearDown(self):
         super(IronicPluginTestCase, self).tearDown()
 
-    def _create_default_network(self, name):
+    def _create_default_network(self, name, trunked=True):
         """We require the provider and switch extensions
         for networks, so we have a helper with sane defaults.
         """
@@ -62,7 +62,7 @@ class IronicPluginTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
         )
 
         kwargs = {
-            "switch:trunked": True,
+            "switch:trunked": trunked,
             "provider:segmentation_id": 100,
             "provider:network_type": "vlan",
             "provider:physical_network": "snet"
@@ -170,30 +170,20 @@ class TestNetworks(IronicPluginTestCase):
         self.assertEqual(res.status_int, webob.exc.HTTPBadRequest.code)
 
 
-class TestPorts(IronicPluginTestCase):
+class TestPortsBase(IronicPluginTestCase):
 
-    def setUp(self):
-
-        # mock out the driver manager
-        self.driver_manager_mock = mock.Mock()
-        self.driver_manager_patch = mock.patch(
-            'ironic_neutron_plugin.plugin.manager',
-            self.driver_manager_mock)
-        self.driver_manager_patch.start()
-
-        super(TestPorts, self).setUp()
-
-    def tearDown(self):
-        self.driver_manager_patch.stop()
-        super(IronicPluginTestCase, self).tearDown()
-
-    def _create_dummy_data(self):
+    def _create_dummy_data(self, with_portmaps=True):
 
         self.network = self.deserialize(
             self.fmt,
             self._create_default_network('net1')
         )
         self.network_id = self.network['network']['id']
+
+        self.access_network = self.deserialize(
+            self.fmt,
+            self._create_default_network('net2', False))
+        self.access_network_id = self.access_network['network']['id']
 
         self.switch1 = self.deserialize(
             self.fmt,
@@ -204,6 +194,10 @@ class TestPorts(IronicPluginTestCase):
             self._create_switch(self.fmt, '5.6.7.8')
         )
 
+        if with_portmaps:
+            self._create_portmaps()
+
+    def _create_portmaps(self):
         self.portmap1 = self.deserialize(
             self.fmt,
             self._create_portmap(
@@ -223,6 +217,111 @@ class TestPorts(IronicPluginTestCase):
                 primary=False)
         )
 
+
+class TestPorts(TestPortsBase):
+
+    def test_create_with_same_network_raises(self):
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 400)
+
+    def test_create_trunked_with_existing_network(self):
+        self._create_dummy_data()
+
+        network2 = self.deserialize(
+            self.fmt,
+            self._create_default_network('net3')
+        )
+        network_id2 = network2['network']['id']
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        port_res = self._create_port(
+            self.fmt, network_id2,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+    def test_create_access_with_existing_trunked_raises(self):
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        port_res = self._create_port(
+            self.fmt, self.access_network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 400)
+
+    def test_create_access_with_existing_access_raises(self):
+        self._create_dummy_data()
+
+        network2 = self.deserialize(
+            self.fmt,
+            self._create_default_network('net3', False)
+        )
+        network_id2 = network2['network']['id']
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.access_network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        port_res = self._create_port(
+            self.fmt, network_id2,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 400)
+
+
+class TestPortsMockedManager(TestPortsBase):
+
+    def setUp(self):
+        # mock out the driver manager
+        self.driver_manager_mock = mock.Mock()
+        self.driver_manager_patch = mock.patch(
+            'ironic_neutron_plugin.plugin.manager',
+            self.driver_manager_mock)
+        self.driver_manager_patch.start()
+
+        super(TestPortsMockedManager, self).setUp()
+
+    def tearDown(self):
+        if self.driver_manager_patch:
+            self.driver_manager_patch.stop()
+        super(IronicPluginTestCase, self).tearDown()
+
     def _get_mock(self):
         return self.driver_manager_mock.DriverManager()
 
@@ -236,9 +335,255 @@ class TestPorts(IronicPluginTestCase):
     def test_create_calls_attach(self):
         self._create_dummy_data()
 
-        self._create_port(self.fmt, self.network_id, device_id='device')
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        self._create_port(self.fmt, self.network_id,
+                          arg_list=('switch:portmaps',), **port_kwargs)
 
         self._get_mock().attach.assertCalledOnce()
+
+    def test_create_trunked(self):
+        """create_port() with a trunked network, resulting in multiple
+        portmaps used.
+        """
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+        port_res = self.deserialize(self.fmt, port_res)
+
+        # assert correct portmaps were returned in response
+        portmaps = port_res['port']['switch:portmaps']
+        portmap_ids = set([p['id'] for p in portmaps])
+        self.assertEqual(len(portmap_ids), 2)
+        self.assertEqual(
+            self.portmap1['portmap']['id'] in portmap_ids, True)
+        self.assertEqual(
+            self.portmap2['portmap']['id'] in portmap_ids, True)
+
+        # assert driver manager was called with correct arguments
+        self._get_mock().attach.assertCalledOnce()
+        mock_args = self._get_mock().attach.call_args[0]
+        port, ironic_network, ironic_ports = mock_args
+        self.assertEqual(port_res["port"], port)
+
+        self.assertEqual(
+            ironic_db.get_network(self.network_id).as_dict(),
+            ironic_network.as_dict()
+        )
+
+        ironic_ports_dict = [p.as_dict() for p in ironic_ports]
+        self.assertEqual(len(ironic_ports), 2)
+        self.assertTrue(self.portmap1['portmap'] in ironic_ports_dict)
+        self.assertTrue(self.portmap2['portmap'] in ironic_ports_dict)
+
+    def test_create_access(self):
+        """create_port() with an access network, resulting in only
+        the primary portmap being used.
+        """
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.access_network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+        port_res = self.deserialize(self.fmt, port_res)
+
+        portmaps = port_res['port']['switch:portmaps']
+        portmap_ids = set([p['id'] for p in portmaps])
+        self.assertEqual(len(portmap_ids), 1)
+        self.assertEqual(
+            self.portmap1['portmap']['id'] in portmap_ids, True)
+
+        # assert driver manager was called with correct arguments
+        self._get_mock().attach.assertCalledOnce()
+        mock_args = self._get_mock().attach.call_args[0]
+        port, ironic_network, ironic_ports = mock_args
+        self.assertEqual(port_res["port"], port)
+
+        self.assertEqual(
+            ironic_db.get_network(self.access_network_id).as_dict(),
+            ironic_network.as_dict()
+        )
+
+        ironic_ports_dict = [p.as_dict() for p in ironic_ports]
+        self.assertEqual(len(ironic_ports), 1)
+        self.assertTrue(self.portmap1['portmap'] in ironic_ports_dict)
+
+    def test_create_trunked_with_existing_portmap(self):
+        """Test create_port() while passing in portmap information
+        that matches what already exists in the database.
+        """
+        self._create_dummy_data()
+
+        pm1 = self.portmap1["portmap"].copy()
+        pm1.pop("id")
+
+        pm2 = self.portmap2["portmap"].copy()
+        pm2.pop("id")
+
+        portmaps = [pm1, pm2]
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": portmaps}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        mock_args = self._get_mock().attach.call_args[0]
+        port, ironic_network, ironic_ports = mock_args
+
+        ironic_ports_dict = [p.as_dict() for p in ironic_ports]
+        self.assertEqual(len(ironic_ports), 2)
+        self.assertTrue(self.portmap1['portmap'] in ironic_ports_dict)
+        self.assertTrue(self.portmap2['portmap'] in ironic_ports_dict)
+
+    def test_create_access_with_existing_portmap(self):
+        """Test create_port() while passing in portmap information
+        that matches what already exists in the database.
+        """
+        self._create_dummy_data()
+
+        pm1 = self.portmap1["portmap"].copy()
+        pm1.pop("id")
+
+        pm2 = self.portmap2["portmap"].copy()
+        pm2.pop("id")
+
+        portmaps = [pm1, pm2]
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": portmaps}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.access_network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        mock_args = self._get_mock().attach.call_args[0]
+        port, ironic_network, ironic_ports = mock_args
+
+        ironic_ports_dict = [p.as_dict() for p in ironic_ports]
+        self.assertEqual(len(ironic_ports), 1)
+        self.assertTrue(self.portmap1['portmap'] in ironic_ports_dict)
+
+    def test_create_trunked_with_new_portmap(self):
+        self._create_dummy_data(with_portmaps=False)
+
+        # assert no ports for the device exist
+        ports = ironic_db.filter_portmaps(
+            device_id="device")
+        self.assertEqual(len(list(ports)), 0)
+
+        pm1 = {
+            "switch_id": self.switch1["switch"]["id"],
+            "device_id": "device",
+            "port": "1",
+            "primary": True
+        }
+
+        pm2 = {
+            "switch_id": self.switch2["switch"]["id"],
+            "device_id": "device",
+            "port": "1",
+            "primary": False
+        }
+
+        portmaps = [pm1, pm2]
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": portmaps}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        # assert a port was created
+        ports = ironic_db.filter_portmaps(device_id="device")
+        self.assertEqual(len(list(ports)), 2)
+
+        mock_args = self._get_mock().attach.call_args[0]
+        port, ironic_network, ironic_ports = mock_args
+
+        ironic_ports_dict = [p.as_dict() for p in ironic_ports]
+        self.assertEqual(len(ironic_ports), 2)
+        self.assertTrue(ports[0].as_dict() in ironic_ports_dict)
+        self.assertTrue(ports[1].as_dict() in ironic_ports_dict)
+
+    def test_create_access_with_new_portmap(self):
+        self._create_dummy_data(with_portmaps=False)
+
+        # assert no ports for the device exist
+        ports = ironic_db.filter_portmaps(device_id="device")
+        self.assertEqual(len(list(ports)), 0)
+
+        pm1 = {
+            "switch_id": self.switch1["switch"]["id"],
+            "device_id": "device",
+            "port": "1",
+            "primary": True
+        }
+
+        portmaps = [pm1]
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": portmaps}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(self.fmt, self.access_network_id,
+                                     arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 201)
+
+        # assert a port was created
+        ports = ironic_db.filter_portmaps(device_id="device")
+        self.assertEqual(len(list(ports)), 1)
+
+        # assert the port was passed to the driver manager
+        mock_args = self._get_mock().attach.call_args[0]
+        port, ironic_network, ironic_ports = mock_args
+
+        ironic_ports_dict = [p.as_dict() for p in ironic_ports]
+        self.assertEqual(len(ironic_ports), 1)
+        self.assertTrue(ports[0].as_dict() in ironic_ports_dict)
+
+    def test_create_with_different_portmap_raises(self):
+        """Test create_port() while passing in portmap information
+        that matches what already exists in the database.
+        """
+        self._create_dummy_data()
+
+        pm1 = self.portmap1["portmap"].copy()
+        pm1.pop("id")
+
+        pm2 = self.portmap2["portmap"].copy()
+        pm2.pop("id")
+        pm2["port"] = "5"
+
+        portmaps = [pm1, pm2]
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": portmaps}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(self.fmt, self.network_id,
+                                     arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, 400)
 
 
 class TestSwitches(IronicPluginTestCase):

@@ -20,6 +20,7 @@ from ironic_neutron_plugin import exceptions as exc
 
 from simplejson import scanner as json_scanner
 
+from neutron.api.v2 import attributes as attr
 from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ LOG = logging.getLogger(__name__)
 EXTRA_ATTRIBUTES = {
     "ports": {
         "switch:portmaps": {"allow_post": True, "allow_put": False,
-                            "validate": {"type:list": None},
+                            "convert_to": attr.convert_none_to_empty_list,
                             "is_visible": True}
     },
     "networks": {
@@ -110,22 +111,8 @@ class PortMapController(wsgi.Controller):
     def delete(self, request, id):
         db.delete_portmap(id)
 
-    def create(self, request):
-
-        try:
-            body = request.json_body
-        except json_scanner.JSONDecodeError:
-            raise exc.BadRequest(
-                resource="portmap",
-                reason="invalid JSON body")
-
-        try:
-            body = body.pop("portmap")
-        except KeyError:
-            raise exc.BadRequest(
-                resource="portmap",
-                reason="'portmap' not found in request body")
-
+    @classmethod
+    def create_portmap(cls, body):
         try:
             switch_id = body.pop('switch_id')
             device_id = body.pop('device_id')
@@ -164,7 +151,25 @@ class PortMapController(wsgi.Controller):
                 resource="portmap",
                 reason="not allowed more than 1 primary port per device")
 
-        portmap = db.create_portmap(switch_id, device_id, port, primary)
+        return db.create_portmap(switch_id, device_id, port, primary)
+
+    def create(self, request):
+
+        try:
+            body = request.json_body
+        except json_scanner.JSONDecodeError:
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="invalid JSON body")
+
+        try:
+            body = body.pop("portmap")
+        except KeyError:
+            raise exc.BadRequest(
+                resource="portmap",
+                reason="'portmap' not found in request body")
+
+        portmap = self.create_portmap(body)
         return dict(portmap=portmap.as_dict())
 
 

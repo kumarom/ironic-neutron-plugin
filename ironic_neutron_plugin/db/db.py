@@ -90,14 +90,14 @@ def delete_portbinding(port_id, network_id, switch_port_id):
 def create_portmap(switch_id, device_id, port, primary):
     session = db_api.get_session()
 
-    with session.begin(subtransactions=True):
-        portmap = models.IronicSwitchPort(
-            switch_id=switch_id,
-            device_id=device_id,
-            port=port,
-            primary=primary)
-        session.add(portmap)
-        return portmap
+    portmap = models.IronicSwitchPort(
+        switch_id=switch_id,
+        device_id=device_id,
+        port=port,
+        primary=primary)
+    session.add(portmap)
+    session.flush()
+    return portmap
 
 
 def get_all_portmaps():
