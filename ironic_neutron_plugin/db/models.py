@@ -12,14 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sqlalchemy as sa
-from sqlalchemy import orm as sa_orm
+from Crypto.Cipher import AES
+from Crypto import Random
+
+from ironic_neutron_plugin import config
 
 from neutron.db import model_base
 from neutron.db import models_v2
 from neutron.openstack.common import log as logging
 
+import sqlalchemy as sa
+from sqlalchemy import orm as sa_orm
+
+import base64
+
 LOG = logging.getLogger(__name__)
+
+
+def aes_encrypt(key, msg):
+    iv = Random.new().read(AES.block_size)
+    cipher = AES.new(key, AES.MODE_CFB, iv)
+    ciphertext = iv + cipher.encrypt(msg)
+    return base64.b64encode(ciphertext)
+
+
+def aes_decrypt(key, msg):
+    msg = base64.b64decode(msg)
+    iv = msg[:AES.block_size]
+    cipher = AES.new(key, AES.MODE_CFB, iv)
+    msg = cipher.decrypt(msg[AES.block_size:])
+    return msg
+
+
+class EncryptedValue(sa.TypeDecorator):
+    impl = sa.String
+
+    def process_bind_param(self, value, dialect):
+        if value:
+            key = config.get_ironic_config().credential_secret
+            value = aes_encrypt(key, value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value:
+            key = config.get_ironic_config().credential_secret
+            value = aes_decrypt(key, value)
+        return value
 
 
 class IronicSwitchPort(model_base.BASEV2, models_v2.HasId):
@@ -72,8 +110,8 @@ class IronicSwitch(model_base.BASEV2, models_v2.HasId):
     __tablename__ = "ironic_switches"
 
     ip = sa.Column(sa.String(255))
-    username = sa.Column(sa.String(255))
-    password = sa.Column(sa.String(255))
+    username = sa.Column(sa.String(255), nullable=True)
+    password = sa.Column(EncryptedValue(255), nullable=True)
 
     # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
@@ -85,7 +123,7 @@ class IronicSwitch(model_base.BASEV2, models_v2.HasId):
             u"id": self.id,
             u"ip": self.ip,
             u"username": self.username,
-            u"password": u'******',
+            u"password": "*****",
             u"type": self.type
         }
 

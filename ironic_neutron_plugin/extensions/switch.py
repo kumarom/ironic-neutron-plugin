@@ -83,6 +83,7 @@ class SwitchController(wsgi.Controller):
                 reason="missing required key: %s" % (e.message))
 
         switch = db.create_switch(switch_ip, username, password, switch_type)
+
         return dict(switch=switch.as_dict())
 
 
