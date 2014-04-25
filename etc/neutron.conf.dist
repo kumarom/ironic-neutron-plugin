@@ -11,3 +11,4 @@ connection = mysql://root@127.0.0.1:3306/neutron
 
 [ironic]
 dry_run = True
+credential_secret = 44ee83001278fd0874ffe5b07ec94983

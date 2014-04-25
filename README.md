@@ -18,19 +18,48 @@ Notes/Open Questions
 ====================
 
 1. An ml2 driver seems like it exposes enough functionality for us if we are only playing with ToRs. The major issue is there doesn't seem to be a clean way to hook into loading custom extensions, but this might be a bad idea anyway to maintain a portmap in neutron.
-2. A lot of the implementation details for configuring cisco stuff was copied from the neutron repo. As far as I can tell there doesn't exist sufficient abstraction to support the create_port() behavior we want but still use the existing vendor mechanism drivers. (At least not without a lot of hacking) I'm not sure what the long-term solution should be, but for now we'll likely have to implement yet another driver abstraction layer for the hardware we need to support.
+2. It's a bummer to have to implement yet another driver abstraction layer to actually talk to the hardware. You might be able to pick some parts out of other plugins that are relevant?
 
 Development
 ===========
 
+Create a Virtualenv
+-------------------
+
+0. ```tox -e devenv```
+1. ```. devenv/bin/activate```
+
+*NOTE* This can take a while - lots of dependencies.
+
 Create neutron.conf
 -----------------
 
-0. A suitable template for development is located @ ironic-neutron-plugin/etc/neutron/neutron.conf.dist
+0. ```cp ./etc/neutron.conf.dist ./etc/neutron.conf```
 1. ```state_path``` - writable temp dir
 2. ```api_extensions_path``` - absolute path to ironic-neutron-pluin/extensions
 3. ```[database]``` - writeable mysql db - sqlite:// probably works?
 4. ```core_plugin``` - plugin module
+
+Change Switch Credendial Encryption Key
+---------------------------------------
+
+Switch credentials are stored encrypted with AES in the datastore.
+
+You must generate your own secret key before using this plugin.
+
+```
+python ./scripts/crypto/crypto.py gen_key
+
+Generated AES Key:
+5422035f085eae3129cd32955d6e92d7
+```
+
+place the output in neutron.conf
+
+```
+[ironic]
+credential_key = 5422035f085eae3129cd32955d6e92d7
+```
 
 Run Neutron Server
 ------------------
@@ -124,17 +153,29 @@ Default neutron subnet object.
 Port (Neutron Object)
 ---------------------
 
-Default neutron port object. We require mac_address and device_id be set so we can find which switchports to configure via the PortMap object. Switchport information is returned in the default response.
+Default neutron port object. We require device_id be set so we can find which switchports to configure via the PortMap object. Switchport information is returned in the default response.
+
+You can specify portmaps directly in the create request, or ahead of time via the portmap extension, or with an update request as long as the port admin_state_up == False.
+
+'admin_state_up' == True will validate portmaps and push the switch configuration immediately. You can specify False to *not* configure the switch and do it later with an update.
 
 #### Create
 
-```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "device", "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
+```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"admin_state_up": true, "network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "device", "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
+
+```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"admin_state_up": false, "network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "device"}}'```
 
 #### Read
 
 ```curl localhost:9696/v2.0/ports```
 
 ```curl localhost:9696/v2.0/ports?device_id=<device_id>```
+
+#### Update
+
+```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"name": "myport", "admin_state_up": true}}'```
+
+```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"admin_state_up": true, "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
 
 #### Delete
 
