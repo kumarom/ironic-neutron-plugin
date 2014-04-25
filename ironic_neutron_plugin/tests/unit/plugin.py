@@ -87,10 +87,22 @@ class TestPortsBase(base.IronicPluginTestCase):
         )
         self.network_id = self.network['network']['id']
 
+        self.subnet = self.deserialize(
+            self.fmt,
+            self._create_subnet(
+                self.fmt, self.network_id, "192.168.1.0/24")
+        )
+
         self.access_network = self.deserialize(
             self.fmt,
             self._create_default_network('net2', False))
         self.access_network_id = self.access_network['network']['id']
+
+        self.access_subnet = self.deserialize(
+            self.fmt,
+            self._create_subnet(
+                self.fmt, self.access_network_id, "192.168.2.0/24")
+        )
 
         self.switch1 = self.deserialize(
             self.fmt,
@@ -127,6 +139,18 @@ class TestPortsBase(base.IronicPluginTestCase):
 
 class TestPorts(TestPortsBase):
 
+    def test_create_no_portmaps_raises(self):
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device_noportmaps",
+                       "switch:portmaps": []}
+        port_arg_list = ('switch:portmaps',)
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=port_arg_list, **port_kwargs)
+
+        self.assertEqual(port_res.status_int, webob.exc.HTTPBadRequest.code)
+
     def test_create_with_same_network_raises(self):
         self._create_dummy_data()
 
@@ -153,6 +177,9 @@ class TestPorts(TestPortsBase):
             self._create_default_network('net3')
         )
         network_id2 = network2['network']['id']
+
+        self._create_subnet(
+            self.fmt, network_id2, '192.168.3.0/24')
 
         port_kwargs = {"device_id": "device",
                        "switch:portmaps": []}
@@ -195,6 +222,9 @@ class TestPorts(TestPortsBase):
             self._create_default_network('net3', False)
         )
         network_id2 = network2['network']['id']
+
+        self._create_subnet(
+            self.fmt, network_id2, '192.168.3.0/24')
 
         port_kwargs = {"device_id": "device",
                        "switch:portmaps": []}
@@ -248,6 +278,121 @@ class TestPortsMockedManager(TestPortsBase):
                           arg_list=('switch:portmaps',), **port_kwargs)
 
         self._get_mock().attach.assertCalledOnce()
+
+    def test_create_admin_state_down_does_not_attach(self):
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": [],
+                       "admin_state_up": False}
+        self._create_port(self.fmt, self.network_id,
+                          arg_list=('switch:portmaps',), **port_kwargs)
+
+        self._get_mock().attach.assertNotCalled()
+
+    def test_update_admin_state_down_raises(self):
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": []}
+
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=('switch:portmaps',), **port_kwargs)
+
+        port = self.deserialize(self.fmt, port_res)
+
+        update_req = self.new_update_request(
+            'ports', {"port": {"admin_state_up": False}}, port["port"]["id"])
+        update_res = update_req.get_response(self.api)
+
+        self.assertEqual(update_res.status_code, webob.exc.HTTPBadRequest.code)
+
+    def test_update_admin_state_up_calls_attach(self):
+        self._create_dummy_data()
+
+        port_kwargs = {"device_id": "device",
+                       "switch:portmaps": [],
+                       "admin_state_down": False}
+
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=('switch:portmaps',), **port_kwargs)
+
+        port = self.deserialize(self.fmt, port_res)
+
+        update_req = self.new_update_request(
+            'ports', {"port": {"admin_state_up": True}}, port["port"]["id"])
+        update_res = update_req.get_response(self.api)
+
+        self.assertEqual(update_res.status_code, 200)
+        self._get_mock().attach.assertCalledOnce()
+
+    def test_update_portmaps(self):
+        self._create_dummy_data()
+
+        portmap1 = {
+            "port": "2",
+            "switch_id": self.switch1["switch"]["id"],
+            "primary": True}
+
+        portmap2 = {
+            "port": "2",
+            "switch_id": self.switch2["switch"]["id"],
+            "primary": False}
+
+        port_kwargs = {"device_id": "device_noportmaps",
+                       "switch:portmaps": [],
+                       "admin_state_up": False}
+
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=('switch:portmaps',), **port_kwargs)
+
+        port = self.deserialize(self.fmt, port_res)
+
+        data = {"port": {"admin_state_up": True,
+                         "switch:portmaps": [portmap1, portmap2]}}
+        update_req = self.new_update_request(
+            'ports', data, port["port"]["id"])
+        update_res = update_req.get_response(self.api)
+
+        self.assertEqual(update_res.status_code, 200)
+        self._get_mock().attach.assertCalledOnce()
+
+    def test_update_portmaps_validates(self):
+        self._create_dummy_data()
+
+        # Try to map to an existing port
+        portmap1 = {
+            "port": "1",
+            "switch_id": self.switch1["switch"]["id"],
+            "primary": True}
+
+        portmap2 = {
+            "port": "1",
+            "switch_id": self.switch2["switch"]["id"],
+            "primary": False}
+
+        port_kwargs = {"device_id": "device_noportmaps",
+                       "switch:portmaps": [],
+                       "admin_state_up": False}
+
+        port_res = self._create_port(
+            self.fmt, self.network_id,
+            arg_list=('switch:portmaps',), **port_kwargs)
+
+        port = self.deserialize(self.fmt, port_res)
+
+        data = {"port": {"admin_state_up": True,
+                         "switch:portmaps": [portmap1, portmap2]}}
+        update_req = self.new_update_request(
+            'ports', data, port["port"]["id"])
+        update_res = update_req.get_response(self.api)
+
+        self.assertEqual(
+            update_res.status_code, webob.exc.HTTPBadRequest.code)
+        self._get_mock().attach.assertNotCalled()
 
     def test_create_trunked(self):
         """create_port() with a trunked network, resulting in multiple

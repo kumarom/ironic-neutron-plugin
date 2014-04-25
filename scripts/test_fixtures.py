@@ -87,7 +87,32 @@ def create_subnet(url, network_id, subnet):
     return r['subnet']['id']
 
 def create_switch(url, switch):
-    pass
+    r = requests.post('%s/v2.0/switches' % url,
+                      headers={'Content-Type': 'application/json'},
+                      data=json.dumps({'switch': switch}))
+
+    if r.status_code != 200:
+        raise FixtureException('create_switch failed: %s' % r.text)
+
+    r = r.json()
+    return r['switch']['id']
+
+def create_portmap(url, number, switch_id, primary):
+    portmap = {
+      "switch_id": switch_id,
+      "device_id": "device%s" % number,
+      "port": str(number),
+      "primary": primary
+    }
+    r = requests.post('%s/v2.0/portmaps' % url,
+                      headers={'Content-Type': 'application/json'},
+                      data=json.dumps({'portmap': portmap}))
+
+    if r.status_code != 200:
+        raise FixtureException('create_portmap failed: %s' % r.text)
+
+    r = r.json()
+    return r['portmap']['id']
 
 def main():
     parser = argparse.ArgumentParser(description='Add some development fixtures.')
@@ -104,8 +129,16 @@ def main():
         subnet_id = create_subnet(url, net_id, subnet)
         print 'created subnet %s' % subnet_id
 
-    for switch in [SWITCH_1, SWITCH_2]:
-        create_switch(url, switch)
+    switch1_id = create_switch(url, SWITCH_1)
+    print 'created switch %s' % switch1_id
+    switch2_id = create_switch(url, SWITCH_2)
+    print 'created switch %s' % switch2_id
+
+
+    for i in xrange(5):
+      create_portmap(url, i, switch1_id, primary=True)
+      create_portmap(url, i, switch2_id, primary=False)
+      print 'created portmaps for device%s' % i
 
 if __name__ == "__main__":
     main()

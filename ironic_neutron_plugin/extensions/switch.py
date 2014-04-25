@@ -29,8 +29,8 @@ LOG = logging.getLogger(__name__)
 
 EXTRA_ATTRIBUTES = {
     "ports": {
-        "switch:portmaps": {"allow_post": True, "allow_put": False,
-                            "convert_to": attr.convert_none_to_empty_list,
+        "switch:portmaps": {"allow_post": True, "allow_put": True,
+                            "default": attr.ATTR_NOT_SPECIFIED,
                             "is_visible": True}
     },
     "networks": {

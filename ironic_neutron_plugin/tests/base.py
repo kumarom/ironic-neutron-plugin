@@ -24,7 +24,6 @@ from oslo.config import cfg
 PLUGIN_NAME = "ironic_neutron_plugin.plugin.IronicPlugin"
 
 ROOT_DIR = os.path.dirname(os.path.dirname(__file__))
-CONFIG_FILE = os.path.join(ROOT_DIR, '../etc/neutron.conf')
 
 
 class IronicPluginTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
@@ -71,8 +70,9 @@ class IronicPluginTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
             "provider:physical_network": "snet"
         }
 
-        return self._create_network(
+        net_res = self._create_network(
             self.fmt, name, True, arg_list=arg_list, **kwargs)
+        return net_res
 
     def _create_switch(self, fmt, ip, arg_list=None, **kwargs):
 

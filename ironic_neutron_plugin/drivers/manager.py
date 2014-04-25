@@ -45,9 +45,13 @@ class DriverManager(object):
 
     def _get_ip(self, neutron_port):
         ips = neutron_port['fixed_ips']
+        if len(ips) == 0:
+            raise base_driver.DriverException(
+                ('No fixed_ips assigned to port %s'
+                 % (neutron_port['id'])))
         if len(ips) != 1:
             raise base_driver.DriverException(
-                ('More than 1 IP assigned to port %s'
+                ('More than 1 fixed_ip assigned to port %s'
                  % (neutron_port['id'])))
         return ips[0]['ip_address']
 
@@ -105,6 +109,12 @@ class DriverManager(object):
         """Realize a neutron port configuration on given physical ports."""
 
         try:
+            if not ironic_switch_ports:
+                msg = ('Cannot attach, no given switchports '
+                       'for port %s' % neutron_port)
+                LOG.error(msg)
+                raise base_driver.DriverException(msg)
+
             for ironic_switch_port in ironic_switch_ports:
 
                 portbindings = self._get_portbindings(ironic_switch_port)
@@ -129,6 +139,12 @@ class DriverManager(object):
     def detach(self, neutron_port, ironic_network, ironic_switch_ports):
         """Realize a neutron port configuration on given physical ports."""
         try:
+            if not ironic_switch_ports:
+                msg = ('Cannot attach, no given switchports '
+                       'for port %s' % neutron_port)
+                LOG.error(msg)
+                raise base_driver.DriverException(msg)
+
             for ironic_switch_port in ironic_switch_ports:
 
                 portbindings = self._get_portbindings(ironic_switch_port)
