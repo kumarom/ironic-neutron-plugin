@@ -64,23 +64,37 @@ class IronicSwitchPort(model_base.BASEV2, models_v2.HasId):
     """Maps a device to a physical switch port."""
 
     __tablename__ = "ironic_switch_ports"
-
-    switch_id = sa.Column(sa.String(36),
+    
+    switch_id = sa.Column(sa.String(255),
                           sa.ForeignKey("ironic_switches.id"),
                           nullable=False)
-    # ironic chassis id
-    device_id = sa.Column(sa.String(255), index=True)
-    # switch port number: <1-n>
-    port = sa.Column(sa.String(255))
-    # for non-trunked networks, only this port will be configured
-    primary = sa.Column(sa.Boolean)
+    port = sa.Column(sa.String(255), nullable=False)
+    hardware_id = sa.Column(sa.String(255), index=True, nullable=False)
+    primary = sa.Column(sa.Boolean, nullable=False)
+
+    # LLDP fields
+    system_name = sa.Column(sa.String(255), nullable=True)
+    port_id = sa.Column(sa.String(255), nullable=True)
+    port_description = sa.Column(sa.String(255), nullable=True)
+    chassis_id = sa.Column(sa.String(255), nullable=True)
+    
+    # Extra
+    mac_address = sa.Column(sa.String(255), nullable=True)
+
 
     def as_dict(self):
         return {
             u"id": self.id,
             u"switch_id": self.switch_id,
-            u"device_id": self.device_id,
             u"port": self.port,
+
+            u"system_name": self.system_name,
+            u"port_id": self.port_id,
+            u"chassis_id": self.chassis_id,
+            u"port_description": self.port_description,
+            u"mac_address": self.mac_address,
+
+            u"hardware_id": self.hardware_id,
             u"primary": self.primary
         }
 
@@ -100,7 +114,7 @@ class IronicSwitchType(object):
         }
 
 
-class IronicSwitch(model_base.BASEV2, models_v2.HasId):
+class IronicSwitch(model_base.BASEV2):
     """A physical switch and admin credentials.
 
     TODO(morgabra) We probably want to assign an id to a switch, maybe
@@ -109,6 +123,7 @@ class IronicSwitch(model_base.BASEV2, models_v2.HasId):
 
     __tablename__ = "ironic_switches"
 
+    id = sa.Column(sa.String(255), primary_key=True)
     ip = sa.Column(sa.String(255))
     username = sa.Column(sa.String(255), nullable=True)
     password = sa.Column(EncryptedValue(255), nullable=True)
@@ -116,7 +131,7 @@ class IronicSwitch(model_base.BASEV2, models_v2.HasId):
     # TODO(morgabra) validation
     type = sa.Column(sa.String(255))
     switch_ports = sa_orm.relationship(
-        IronicSwitchPort, cascade="delete", backref="switch")
+        IronicSwitchPort, lazy="joined", cascade="delete", backref="switch")
 
     def as_dict(self):
         return {
@@ -147,6 +162,22 @@ class IronicNetwork(model_base.BASEV2):
             u"provider:network_type": self.network_type,
             u"switch:trunked": self.trunked
         }
+
+class IronicPort(model_base.BASEV2):
+    """Keep track of extra information about neutron ports."""
+
+    __tablename__ = "ironic_port"
+
+    port_id = sa.Column(sa.String(255), primary_key=True)
+    commit = sa.Column(sa.Boolean)
+    hardware_id = sa.Column(sa.String(255), nullable=True) 
+
+    def as_dict(self):
+        return {
+            u"port_id": self.port_id,
+            u"switch:commit": self.commit,
+            u"switch:hardware_id": self.hardware_id
+        }  
 
 
 class IronicPortBindingState(object):

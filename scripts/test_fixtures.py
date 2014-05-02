@@ -51,12 +51,14 @@ SNET_SUBNET = {
 }
 
 SWITCH_1 = {
+    "id": "switch1",
     "ip": "10.127.75.135",
     "username": "admin",
     "password": "admin",
     "type": "cisco"
 }
 SWITCH_2 = {
+    "id": "switch2",
     "ip": "10.127.75.136",
     "username": "admin",
     "password": "admin",
@@ -100,7 +102,7 @@ def create_switch(url, switch):
 def create_portmap(url, number, switch_id, primary):
     portmap = {
       "switch_id": switch_id,
-      "device_id": "device%s" % number,
+      "hardware_id": "device%s" % number,
       "port": str(number),
       "primary": primary
     }

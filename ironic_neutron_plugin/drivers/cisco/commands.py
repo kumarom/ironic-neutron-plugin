@@ -13,9 +13,26 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import re
+
 
 def _configure():
     return ['configure terminal']
+
+
+def _make_ethernet_interface(interface):
+    """Ethernet port ids from LLDP look like 'Eth1/1' or 'Ethernet1/1'"""
+    return re.sub("[^0-9/]", "", interface)
+
+def _make_portchannel_interface(interface):
+    interface = _make_ethernet_interface(interface)
+
+    split = interface.split('/')
+
+    if len(split) == 1:
+        return split[0]
+    else:
+        return split[-1]
 
 
 def _configure_interface(type, interface):
@@ -26,9 +43,9 @@ def _configure_interface(type, interface):
 
 
 # shared port-channel/ethernet interface configuration for trunked interfaces
-def _base_trunked_configuration(device_id, interface, vlan_id):
+def _base_trunked_configuration(hardware_id, interface, vlan_id):
     return [
-        'description CUST%s-host' % device_id,
+        'description CUST%s-host' % hardware_id,
         'switchport mode trunk',
         'switchport trunk allowed vlan %s' % vlan_id,
         'spanning-tree port type edge trunk',
@@ -37,9 +54,9 @@ def _base_trunked_configuration(device_id, interface, vlan_id):
 
 
 # shared port-channel/ethernet interface configuration for access interfaces
-def _base_access_configuration(device_id, interface, vlan_id):
+def _base_access_configuration(hardware_id, interface, vlan_id):
     return [
-        'description CUST%s-host' % device_id,
+        'description CUST%s-host' % hardware_id,
         'switchport mode access',
         'switchport access vlan %s' % vlan_id,
         'spanning-tree port type edge',
@@ -113,7 +130,7 @@ def _delete_ethernet_interface(interface, trunked, vlan_id=None):
         cmd = _delete_access_configuration(vlan_id)
 
     return (
-        _configure_interface('ethernet', '1/%s' % (interface)) +
+        _configure_interface('ethernet', interface) +
         cmd
     )
 
@@ -122,28 +139,31 @@ def show_interface_configuration(type, interface):
     return ['show running interface %s %s' % (type, interface)]
 
 
-def create_port(device_id, interface, vlan_id, ip, mac_address, trunked):
+def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
+
+    portchan_int = _make_portchannel_interface(interface)
+    eth_int = _make_ethernet_interface(interface)
 
     conf = []
     if trunked:
         conf = (
             # port-channel
-            _configure_interface('port-channel', interface) +
-            _base_trunked_configuration(device_id, interface, vlan_id) +
-            _add_vpc(interface) +
+            _configure_interface('port-channel', portchan_int) +
+            _base_trunked_configuration(hardware_id, portchan_int, vlan_id) +
+            _add_vpc(portchan_int) +
 
             # IPSG
-            _bind_ip(ip, mac_address, vlan_id, interface) +
+            _bind_ip(ip, mac_address, vlan_id, portchan_int) +
 
             # ethernet
-            _configure_interface('ethernet', '1/%s' % (interface)) +
-            _base_trunked_configuration(device_id, interface, vlan_id) +
-            _add_channel_group(interface)
+            _configure_interface('ethernet', eth_int) +
+            _base_trunked_configuration(hardware_id, eth_int, vlan_id) +
+            _add_channel_group(portchan_int)
         )
     else:
         conf = (
-            _configure_interface('ethernet', '1/%s' % (interface)) +
-            _base_access_configuration(device_id, interface, vlan_id)
+            _configure_interface('ethernet', eth_int) +
+            _base_access_configuration(hardware_id, portchan_int, vlan_id)
         )
 
     return conf
@@ -151,37 +171,45 @@ def create_port(device_id, interface, vlan_id, ip, mac_address, trunked):
 
 def delete_port(interface, trunked, vlan_id=None):
 
+    portchan_int = _make_portchannel_interface(interface)
+    eth_int = _make_ethernet_interface(interface)
+
     return (
         # TODO(morgabra) this will leave orphaned ip bindings if trunked!
         # Make sure you remove all vlans before deleting a port
-        _delete_port_channel_interface(interface) +
-        _delete_ethernet_interface(interface, trunked, vlan_id=vlan_id)
+        _delete_port_channel_interface(portchan_int) +
+        _delete_ethernet_interface(eth_int, trunked, vlan_id=vlan_id)
     )
 
 
 def add_vlan(interface, vlan_id, ip, mac_address, trunked):
-        if trunked:
-            return (
-                # port-channel
-                _configure_interface('port-channel', interface) +
-                ['switchport trunk allowed vlan add %s' % (vlan_id)] +
+    portchan_int = _make_portchannel_interface(interface)
+    eth_int = _make_ethernet_interface(interface)
 
-                # IPSG
-                _bind_ip(ip, mac_address, vlan_id, interface)
-            )
-        else:
-            return []  # TODO(morgabra) throw? This is a no-op
-
-
-def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
     if trunked:
         return (
             # port-channel
-            _configure_interface('port-channel', interface) +
+            _configure_interface('port-channel', portchan_int) +
+            ['switchport trunk allowed vlan add %s' % (vlan_id)] +
+            # IPSG
+            _bind_ip(ip, mac_address, vlan_id, interface)
+        )
+    else:
+        return []  # TODO(morgabra) throw? This is a no-op
+
+
+def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
+    portchan_int = _make_portchannel_interface(interface)
+    eth_int = _make_ethernet_interface(interface)
+    
+    if trunked:
+        return (
+            # port-channel
+            _configure_interface('port-channel', portchan_int) +
             ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
 
             # IPSG
-            _unbind_ip(ip, mac_address, vlan_id, interface)
+            _unbind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op

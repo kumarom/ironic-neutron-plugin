@@ -97,7 +97,7 @@ class DriverManager(object):
             switch_ip=ironic_switch_port.switch.ip,
             switch_username=ironic_switch_port.switch.username,
             switch_password=ironic_switch_port.switch.password,
-            device_id=neutron_port["device_id"],
+            hardware_id=neutron_port["switch:hardware_id"],
             interface=ironic_switch_port["port"],
             vlan_id=ironic_network.segmentation_id,
             ip=self._get_ip(neutron_port),
@@ -140,7 +140,7 @@ class DriverManager(object):
         """Realize a neutron port configuration on given physical ports."""
         try:
             if not ironic_switch_ports:
-                msg = ('Cannot attach, no given switchports '
+                msg = ('Cannot detach, no given switchports '
                        'for port %s' % neutron_port)
                 LOG.error(msg)
                 raise base_driver.DriverException(msg)

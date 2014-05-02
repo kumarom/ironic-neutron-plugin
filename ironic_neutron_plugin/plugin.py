@@ -13,7 +13,15 @@
 # limitations under the License.
 
 from neutron.db import api as db_api
+
+from neutron.db import agentschedulers_db
+from neutron.db import allowedaddresspairs_db as addr_pair_db
 from neutron.db import db_base_plugin_v2
+from neutron.db import external_net_db
+from neutron.db import extradhcpopt_db
+from neutron.db import securitygroups_rpc_base as sg_db_rpc
+from neutron.db import quota_db  # noqa
+
 
 from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.drivers import manager
@@ -26,28 +34,22 @@ from neutron.openstack.common import log as logging
 LOG = logging.getLogger(__name__)
 
 
-class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
-    """TODO(morgabra) - lots of stuff - this is miserable to maintain:
-
-    1) Refactor ironic_neutron_plugin.db to return only dicts/lists,
-       returning an sqlalchemy model is way too leaky and confusing.
-
-    2) Fix portmaps - currently you can create portmaps (with validation)
-       via the extension and/or directly in create_port() and/or directly
-       in update_port().
-
-       Currently this is complicated and messy and buggy. Ideally this
-       gets refactored cleanly to a utility class and used everywhere.
-
-    3)
-
-    """
+class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
+                   external_net_db.External_net_db_mixin,
+                   sg_db_rpc.SecurityGroupServerRpcMixin,
+                   agentschedulers_db.DhcpAgentSchedulerDbMixin,
+                   addr_pair_db.AllowedAddressPairsMixin,
+                   extradhcpopt_db.ExtraDhcpOptMixin):
 
     __native_bulk_support = False
     __native_pagination_support = False
     __native_sorting_support = True
 
-    supported_extension_aliases = ["provider", "switch"]
+    supported_extension_aliases = ["switch", "external-net", "binding",
+                                   "quotas", "security-group", "agent",
+                                   "dhcp_agent_scheduler",
+                                   "multi-provider", "allowed-address-pairs",
+                                   "extra_dhcp_opt", "provider"]
 
     def __init__(self):
         super(IronicPlugin, self).__init__()
@@ -139,73 +141,64 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
     def update_subnet(self, context, id, subnet):
         return super(IronicPlugin, self).update_subnet(context, id, subnet)
 
-    def _get_ironic_ports(self, port, ironic_network):
+    def _get_hardware_id_from_port(self, port):
+        if "port" not in port:
+            port = {"port": port}
+
+        hardware_id = port["port"].get("switch:hardware_id")
+        if hardware_id == attr.ATTR_NOT_SPECIFIED:
+            hardware_id = None
+        return hardware_id   
+
+    def _get_portmaps_from_port(self, port):
+        if "port" not in port:
+            port = {"port": port}
+
+        portmaps = port["port"].get("switch:portmaps")
+        if portmaps == attr.ATTR_NOT_SPECIFIED:
+            portmaps = []
+        return portmaps
+
+    def _get_commit_from_port(self, port):
+        if "port" not in port:
+            port = {"port": port}
+
+        commit = port["port"].get("switch:commit")
+        if commit == attr.ATTR_NOT_SPECIFIED:
+            commit = False
+        return commit    
+
+    def _get_ironic_portmaps(self, port, ironic_network):
         """Fetch and validate relevant switchports for a given device_id
         suitable for attaching to the given ironic network.
         """
+        hardware_id = self._get_hardware_id_from_port(port)
         LOG.info(
-            'Fetching portmaps for device %s' % (port["port"]["device_id"]))
+            'Fetching portmaps for hardware_id %s' % (hardware_id))
 
-        device_id = port["port"]["device_id"]
+        if hardware_id:
+            # if trunked we will configure all ports, if access only the primary.
+            if ironic_network.trunked:
+                ironic_portmaps = list(db.filter_portmaps(
+                    hardware_id=hardware_id))
+            else:
+                ironic_portmaps = list(db.filter_portmaps(
+                    hardware_id=hardware_id, primary=True))
+            return ironic_portmaps
+        return []
 
-        # if portmaps aren't specified in the request we coerce it a bit here
-        # so it's easier to deal with.
-        if port["port"]["switch:portmaps"] is attr.ATTR_NOT_SPECIFIED:
-            port["port"]["switch:portmaps"] = []
+    def _create_ironic_portmaps(self, port, ironic_network):
+        hardware_id = self._get_hardware_id_from_port(port)
+        LOG.info('Creating portmaps for hardware_id %s' % (hardware_id))
 
-        portmaps = port["port"]["switch:portmaps"]
-
-        # if trunked we will configure all ports, if access only the primary.
-        if ironic_network.trunked:
-            ironic_ports = list(db.filter_portmaps(
-                device_id=device_id))
-        else:
-            ironic_ports = list(db.filter_portmaps(
-                device_id=device_id, primary=True))
-
-        # If we don't have any portmaps in the database already we can
-        # safely create them.
-        if not ironic_ports:
-            ironic_ports = self._create_ironic_ports(port, ironic_network)
-
-        # If we *do* have portmaps in the database AND some were passed in
-        # the request, we need to validate that they match else we push a
-        # config the user doesn't expect to the switch.
-        else:
-            if portmaps:
-
-                has_id = False
-                for pm in portmaps:
-                    pm["device_id"] = device_id
-                    if "id" in pm:
-                        has_id = True
-
-                for p in ironic_ports:
-                    p = p.as_dict()
-
-                    if not has_id:
-                        p.pop('id')
-
-                    if p not in portmaps:
-                        portmap_ids = ','.join(
-                            [pm.id for pm in ironic_ports])
-                        msg = (
-                            "Given portmap(s) do not match existing "
-                            "portmap(s) with id(s): %s" % (portmap_ids)
-                        )
-                        raise n_exc.BadRequest(
-                            resource="port",
-                            msg=msg)
-
-        # Assert that creating a port for the given network makes sense.
-        return self._validate_ironic_ports(ironic_ports, port, ironic_network)
-
-    def _create_ironic_ports(self, port, ironic_network):
-        device_id = port["port"]["device_id"]
-        LOG.info('Creating portmaps for device %s' % (device_id))
-
-        portmaps = port["port"]["switch:portmaps"]
+        portmaps = self._get_portmaps_from_port(port)
         new_portmaps = []
+
+        if portmaps and not hardware_id:
+            msg = "Must set switch:hardware_id with switch:portmaps"
+            raise n_exc.BadRequest(
+                resource="port",
+                msg=msg)
 
         if portmaps:
             # You may only have a maximum of 2 portmaps
@@ -225,20 +218,20 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
                     msg=msg)
 
             for p in portmaps:
-                p["device_id"] = device_id
+                p["hardware_id"] = hardware_id
                 portmap = switch.PortMapController.create_portmap(p)
                 new_portmaps.append(portmap)
 
         return new_portmaps
 
-    def _validate_ironic_ports(self, ironic_ports, port, ironic_network):
-
-        switchport_ids = [p.id for p in ironic_ports]
+    def _validate_port(self, ironic_portmaps, port, ironic_network):
+        
+        switchport_ids = [p.id for p in ironic_portmaps]
         bound_network_ids = []
         if switchport_ids:
             # Fetch all existing networks we are attached to.
             portbindings = list(db.filter_portbindings_by_switch_port_ids(
-                [p.id for p in ironic_ports]))
+                [p.id for p in ironic_portmaps]))
             bound_network_ids = [pb.network_id for pb in portbindings]
 
         # We can't attach to a non-trunked network if the port is already
@@ -270,8 +263,6 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
                     resource="port",
                     msg=msg)
 
-        return ironic_ports
-
     def _get_ironic_network(self, network_id):
         ironic_network = db.get_network(network_id)
         if not ironic_network:
@@ -283,23 +274,31 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
     def create_port(self, context, port):
 
-        device_id = port["port"].get("device_id")
-        if not device_id:
-            raise n_exc.BadRequest(
-                resource="port",
-                msg="'device_id' is required")
-
         network_id = port["port"]["network_id"]
         ironic_network = self._get_ironic_network(network_id)
 
-        ironic_ports = self._get_ironic_ports(port, ironic_network)
+        commit = self._get_commit_from_port(port)
+        hardware_id = self._get_hardware_id_from_port(port)
+        portmaps = self._get_portmaps_from_port(port)
+
+        ironic_portmaps = self._get_ironic_portmaps(port, ironic_network)
+
+        # TODO(morgabra) This obviously won't do anything if there already exist portmaps
+        # in the databse for a particular hardware_id.
+        if not ironic_portmaps:
+            ironic_portmaps = self._create_ironic_portmaps(port, ironic_network)
+        
+        # throws
+        self._validate_port(ironic_portmaps, port, ironic_network)
 
         port = super(IronicPlugin, self).create_port(context, port)
-        self._add_port_data(port, ironic_ports=ironic_ports)
+        ironic_port = db.create_port(port["id"], commit, hardware_id)
 
-        if port["admin_state_up"]:
+        self._add_port_data(port, ironic_port=ironic_port, ironic_portmaps=ironic_portmaps)
+
+        if commit:
             success = self.driver_manager.attach(
-                port, ironic_network, ironic_ports)
+                port, ironic_network, ironic_portmaps)
 
             if not success:
                 port_id = port["id"]
@@ -313,65 +312,79 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
 
     def delete_port(self, context, id):
         port = self.get_port(context, id)
-        ironic_ports = list(db.filter_portmaps(device_id=port['device_id']))
-
         ironic_network = db.get_network(port['network_id'])
 
-        self.driver_manager.detach(port, ironic_network, ironic_ports)
+        ironic_portmaps = self._get_ironic_portmaps(port, ironic_network)
+
+        self.driver_manager.detach(port, ironic_network, ironic_portmaps)
+        db.delete_port(id)
         return super(IronicPlugin, self).delete_port(context, id)
 
     def update_port(self, context, id, port):
 
-        old_port = {}
-        old_port["port"] = self.get_port(context, id)
+        port = port.get("port", {})
+        old_port = self.get_port(context, id)
 
-        # Don't allow updating device_id for a port
-        if port.get("device_id"):
-            if old_port["port"]["device_id"] != port["port"]["device_id"]:
-                msg = ("Updating device_id not supported")
+        # Don't allow updating hardware_id for a port
+        old_hw_id = self._get_hardware_id_from_port(old_port)
+        new_hw_id = self._get_hardware_id_from_port(port)
+        if new_hw_id:
+            if (old_hw_id is not None) and (new_hw_id != old_hw_id): 
+                msg = ("Updating switch:hardware_id not supported")
                 raise n_exc.BadRequest(
                     resource="port",
                     msg=msg)
+            else:
+                db.update_port_hardware_id(id, new_hw_id)
 
-        # Don't allow admin_state_up True -> False
+        # Don't allow commit True -> False
         # Handle changing admin states
-        old_state = old_port["port"]["admin_state_up"]
-        new_state = port["port"].get("admin_state_up")
+        old_state = self._get_commit_from_port(old_port)
+        new_state = self._get_commit_from_port(port)
 
         if old_state and (new_state is False):
-            msg = ("admin_state_up True -> False not supported")
+            msg = ("switch:commit True -> False not supported")
             raise n_exc.BadRequest(
                 resource="port",
                 msg=msg)
 
         # we want to make sure we add/validate any portmaps that happen
         # to get sent with the update
-        network_id = old_port["port"]["network_id"]
-        ironic_network = self._get_ironic_network(network_id)
-        old_port["port"].update(port["port"])
-        ironic_ports = self._get_ironic_ports(old_port, ironic_network)
+        old_port.update(port)
+        new_port = old_port
 
-        # if we are moving from admin_state_up == False -> True,
+        network_id = new_port["network_id"]
+        ironic_network = self._get_ironic_network(network_id)
+        ironic_portmaps = self._get_ironic_portmaps(new_port, ironic_network)
+
+        if not ironic_portmaps:
+            ironic_portmaps = self._create_ironic_portmaps(new_port, ironic_network)
+        
+        # throws
+        self._validate_port(ironic_portmaps, new_port, ironic_network)
+
+        # if we are moving from commit == False -> True,
         # we need to actually push the config to the switch(es)
         if (old_state is False) and (new_state is True):
-            LOG.info("Port %s setting admin_state_up=True" % id)
+
+            LOG.info("Port %s setting commit=True" % id)
 
             success = self.driver_manager.attach(
-                port, ironic_network, ironic_ports)
-            if not success:
-                port_id = old_port["port"]["id"]
+                new_port, ironic_network, ironic_portmaps)
+            if success:
+                db.update_port_commit(new_port["id"], True)
+            else:
+                port_id = new_port["id"]
                 msg = "Failed configuring port: %s" % port_id
                 raise n_exc.BadRequest(
                     resource="port",
                     msg=msg)
 
-        updated_port = super(IronicPlugin, self).update_port(context, id, port)
-        self._add_port_data(updated_port, ironic_ports=ironic_ports)
+        updated_port = super(IronicPlugin, self).update_port(context, id, {"port": port})
+        self._add_port_data(updated_port, ironic_portmaps=ironic_portmaps)
         return updated_port
 
     def get_port(self, context, id, fields=None):
-        if fields and ('device_id' not in fields):
-            fields.append('device_id')
         port = super(IronicPlugin, self).get_port(context, id, fields)
         port = self._add_port_data(port)
         return port
@@ -379,19 +392,31 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2):
     def get_ports(self, context, filters=None, fields=None,
                   sorts=None, limit=None, marker=None,
                   page_reverse=False):
-        if fields and ('device_id' not in fields):
-            fields.append('device_id')
-        ports = super(IronicPlugin, self).get_ports(
-            context, filters, fields, sorts, limit, marker, page_reverse)
+        if 'switch:hardware_id' in filters and filters['switch:hardware_id']:
+            ports = db.filter_ports(hardware_id=filters['switch:hardware_id'])
+            ports = [self.get_port(context, p.port_id, fields) for p in ports]
+        else:
+            ports = super(IronicPlugin, self).get_ports(
+                context, filters, fields, sorts, limit, marker, page_reverse)
         return [self._add_port_data(p) for p in ports]
 
-    def _add_port_data(self, neutron_port, ironic_ports=None):
+    def _add_port_data(self, neutron_port, ironic_port=None, ironic_portmaps=None):
         """Update default port info with plugin-specific
         stuff (switch port mappings, etc).
         """
-        if not ironic_ports:
-            ironic_ports = db.filter_portmaps(
-                device_id=neutron_port["device_id"])
-        ironic_ports = [p.as_dict() for p in ironic_ports]
-        neutron_port.update({"switch:portmaps": ironic_ports})
+
+        if not ironic_port:
+            ironic_port = db.get_port(neutron_port["id"])
+        
+        hardware_id = ironic_port.hardware_id
+
+        if not ironic_portmaps:
+            ironic_portmaps = db.filter_portmaps(
+                hardware_id=hardware_id)
+
+        ironic_portmaps = [p.as_dict() for p in ironic_portmaps]
+        neutron_port.update({"switch:portmaps": ironic_portmaps})
+        ironic_port_dict = ironic_port.as_dict()
+        ironic_port_dict.pop('port_id')
+        neutron_port.update(ironic_port_dict)
         return neutron_port

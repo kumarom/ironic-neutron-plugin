@@ -106,9 +106,9 @@ PortMap (Extension Object)
 Represents a mapping of abstract 'device_id' to a physical switch port.
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "device_id": "device", "port": "40", "primary": true}}'```
+```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "hardware_id": "device", "port": "40", "primary": true}}'```
 
-```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "device_id": "device", "port": "40", "primary": false}}'```
+```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"system_name": "<switch_id>", "hardware_id": "device", "port_id": "40", "chassis_id": "chassis", "port_description": "port description", "primary": false}}'```
 
 #### Read
 ```curl localhost:9696/v2.0/portmaps```
@@ -161,9 +161,9 @@ You can specify portmaps directly in the create request, or ahead of time via th
 
 #### Create
 
-```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"admin_state_up": true, "network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "device", "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
+```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"switch:commit": true, "network_id": "<network_id>", "tenant_id": "mytenant", "switch:hardware_id": "device", "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
 
-```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"admin_state_up": false, "network_id": "<network_id>", "tenant_id": "mytenant", "device_id": "device"}}'```
+```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"switch:commit": false, "network_id": "147907dd-3a6b-40d9-87d8-6a79e9541c98", "tenant_id": "mytenant", "switch:hardware_id": "device0"}}'```
 
 #### Read
 
@@ -175,7 +175,7 @@ You can specify portmaps directly in the create request, or ahead of time via th
 
 ```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"name": "myport", "admin_state_up": true}}'```
 
-```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"admin_state_up": true, "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
+```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"switch:portmaps": [{"system_name": "switch1", "port_id": "Eth1/40", "primary": True}, {"system_name": "switch2", "port_id": "Eth1/40", "primary": False}]}}'```
 
 #### Delete
 

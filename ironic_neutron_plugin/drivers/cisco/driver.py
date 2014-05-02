@@ -40,13 +40,13 @@ class CiscoDriver(base_driver.Driver):
 
     def create(self, port):
 
-        LOG.debug("Creating port %s for device %s"
-                  % (port.interface, port.device_id))
+        LOG.debug("Creating port %s for hardware_id %s"
+                  % (port.interface, port.hardware_id))
         LOG.debug("Attaching vlan %s to interface %s"
                   % (port.vlan_id, port.interface))
 
         cmds = commands.create_port(
-            device_id=port.device_id,
+            hardware_id=port.hardware_id,
             interface=port.interface,
             vlan_id=port.vlan_id,
             ip=port.ip,
@@ -61,8 +61,8 @@ class CiscoDriver(base_driver.Driver):
 
     def delete(self, port):
 
-        LOG.debug("Deleting port %s for device %s"
-                  % (port.interface, port.device_id))
+        LOG.debug("Deleting port %s for hardware_id %s"
+                  % (port.interface, port.hardware_id))
 
         cmds = commands.delete_port(
             interface=port.interface,

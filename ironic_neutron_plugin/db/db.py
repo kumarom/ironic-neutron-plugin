@@ -22,6 +22,74 @@ from ironic_neutron_plugin.db import models
 
 LOG = logging.getLogger(__name__)
 
+def create_port(port_id, commit, hardware_id):
+    session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        port = models.IronicPort(
+            port_id=port_id,
+            commit=commit,
+            hardware_id=hardware_id)
+        session.add(port)
+        return port
+
+
+def get_all_ports():
+    session = db_api.get_session()
+    return (session.query(models.IronicPort).all())
+
+
+def get_port(port_id):
+    session = db_api.get_session()
+
+    try:
+        return (session.query(models.IronicPort).
+                get((port_id)))
+    except orm.exc.NoResultFound:
+        return None
+
+
+def filter_ports(**kwargs):
+
+    session = db_api.get_session()
+    return (session.query(models.IronicPort).
+            filter_by(**kwargs))
+
+
+def update_port_commit(port_id, commit):
+    session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        port = (session.query(models.IronicPort).
+                get(port_id))
+        port.commit = commit
+        session.add(port)
+        session.flush()
+
+
+def update_port_hardware_id(port_id, hardware_id):
+    session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        port = (session.query(models.IronicPort).
+                get(port_id))
+        port.hardware_id = hardware_id
+        session.add(port)
+        session.flush()
+
+
+def delete_port(port_id):
+    session = db_api.get_session()
+
+    port = get_port(port_id)
+
+    if not port:
+        return False  # TODO(morgabra) throw probably
+
+    session.delete(port)
+    session.flush()
+    return True
+
 
 def create_portbinding(port_id, network_id, switch_port_id):
     session = db_api.get_session()
@@ -51,7 +119,6 @@ def get_portbinding(port_id, network_id, switch_port_id):
 
 
 def filter_portbindings(**kwargs):
-
     session = db_api.get_session()
     return (session.query(models.IronicPortBinding).
             filter_by(**kwargs))
@@ -87,16 +154,18 @@ def delete_portbinding(port_id, network_id, switch_port_id):
     return True
 
 
-def create_portmap(switch_id, device_id, port, primary):
+def create_portmap(switch_id, port, hardware_id, primary, **kwargs):
     session = db_api.get_session()
 
     portmap = models.IronicSwitchPort(
         switch_id=switch_id,
-        device_id=device_id,
         port=port,
-        primary=primary)
+        hardware_id=hardware_id,
+        primary=primary,
+        **kwargs)
     session.add(portmap)
     session.flush()
+    portmap.switch
     return portmap
 
 
@@ -132,11 +201,12 @@ def delete_portmap(portmap_id):
     return True
 
 
-def create_switch(switch_ip, username, password, switch_type):
+def create_switch(switch_id, switch_ip, username, password, switch_type):
     session = db_api.get_session()
 
     with session.begin(subtransactions=True):
         switch = models.IronicSwitch(
+            id=switch_id,
             ip=switch_ip,
             username=username,
             password=password,

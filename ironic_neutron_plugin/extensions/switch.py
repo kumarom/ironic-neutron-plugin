@@ -25,13 +25,18 @@ from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 
-#TODO(morgabra) 'switch' is a terrible extension name
-
 EXTRA_ATTRIBUTES = {
     "ports": {
         "switch:portmaps": {"allow_post": True, "allow_put": True,
                             "default": attr.ATTR_NOT_SPECIFIED,
-                            "is_visible": True}
+                            "is_visible": True},
+        "switch:commit": {"allow_post": True, "allow_put": True,
+                          "default": attr.ATTR_NOT_SPECIFIED,
+                          "validate": {"type:boolean": None},
+                          "is_visible": True},
+        "switch:hardware_id": {"allow_post": True, "allow_put": True,
+                               "default": attr.ATTR_NOT_SPECIFIED,
+                               "is_visible": True}
     },
     "networks": {
         "switch:trunked": {"allow_post": True, "allow_put": False,
@@ -73,6 +78,7 @@ class SwitchController(wsgi.Controller):
                 reason="'switch' not found in request body")
 
         try:
+            switch_id = body.pop('id')
             switch_ip = body.pop('ip')
             username = body.pop('username')
             password = body.pop('password')
@@ -82,7 +88,7 @@ class SwitchController(wsgi.Controller):
                 resource="switch",
                 reason="missing required key: %s" % (e.message))
 
-        switch = db.create_switch(switch_ip, username, password, switch_type)
+        switch = db.create_switch(switch_id, switch_ip, username, password, switch_type)
 
         return dict(switch=switch.as_dict())
 
@@ -91,8 +97,8 @@ class PortMapController(wsgi.Controller):
 
     def index(self, request):
         filters = {}
-        if request.GET.get("device_id"):
-            filters["device_id"] = request.GET.get("device_id")
+        if request.GET.get("hardware_id"):
+            filters["hardware_id"] = request.GET.get("hardware_id")
         elif request.GET.get("switch_id"):
             filters["switch_id"] = request.GET.get("switch_id")
 
@@ -114,15 +120,29 @@ class PortMapController(wsgi.Controller):
 
     @classmethod
     def create_portmap(cls, body):
-        try:
-            switch_id = body.pop('switch_id')
-            device_id = body.pop('device_id')
-            port = body.pop('port')
-            primary = body.pop('primary')
-        except KeyError as e:
+        # Required
+        switch_id = body.get('switch_id')
+        port = body.get('port')
+        primary = body.get('primary')
+        hardware_id = body.get('hardware_id')
+
+        # LLDP
+        system_name = body.get('system_name')
+        port_id = body.get('port_id')
+        chassis_id = body.get('chassis_id')
+        port_description = body.get('port_description')
+
+        # Extra
+        mac_address = body.get('mac_address')
+        
+        # Use LLDP information if not given explicitly
+        switch_id = switch_id or system_name
+        port = port or port_id
+        
+        if not (switch_id and port and hardware_id and isinstance(primary, bool)):
             raise exc.BadRequest(
                 resource="portmap",
-                reason="missing required key: %s" % (e.message))
+                reason="missing required key")
 
         switch = db.get_switch(switch_id)
 
@@ -130,29 +150,34 @@ class PortMapController(wsgi.Controller):
             raise exc.NotFound(
                 resource="switch %s" % (switch_id))
 
-        # Validation - only 1 device per switchport
-        portmaps = list(db.filter_portmaps(switch_id=switch_id, port=port))
+        # Validation - only 1 hardware_id per switchport
+        portmaps = list(db.filter_portmaps(
+            switch_id=switch_id, port=port))
         if len(portmaps) >= 1:
             raise exc.BadRequest(
                 resource="portmap",
-                reason=("port already mapped to device "
-                        "'%s'" % (portmaps[0].device_id)))
+                reason=("port already mapped to hardware_id "
+                        "'%s'" % (portmaps[0].hardware_id)))
 
         # Validation - max 2 portmaps and only 1 primary
-        portmaps = list(db.filter_portmaps(device_id=device_id))
+        portmaps = list(db.filter_portmaps(hardware_id=hardware_id))
 
         # TODO(morgabra) Is this worth making configurable?
         if len(portmaps) > 1:
             raise exc.BadRequest(
                 resource="portmap",
-                reason="not allowed more than 2 portmaps per device")
+                reason="not allowed more than 2 portmaps per hardware_id")
 
         if (primary is True) and (any([p.primary for p in portmaps])):
             raise exc.BadRequest(
                 resource="portmap",
-                reason="not allowed more than 1 primary port per device")
+                reason="not allowed more than 1 primary port per hardware_id")
 
-        return db.create_portmap(switch_id, device_id, port, primary)
+        return db.create_portmap(
+            switch_id, port, hardware_id, primary,
+            system_name=system_name, port_id=port_id,
+            chassis_id=chassis_id, port_description=port_description,
+            mac_address=mac_address)
 
     def create(self, request):
 
@@ -187,7 +212,7 @@ class Switch(extensions.ExtensionDescriptor):
     @classmethod
     def get_description(cls):
         return ("Physical switch with access credentials "
-                "and device_id <-> switch port mapping")
+                "and hardware_id <-> switch port mapping")
 
     @classmethod
     def get_namespace(cls):
