@@ -61,9 +61,9 @@ class PortInfo(object):
 
     def __init__(self, switch_ip, switch_username, switch_password,
                  hardware_id, interface, vlan_id, ip, mac_address, trunked):
-        self.switch_ip = switch_ip,
-        self.switch_username = switch_username,
-        self.switch_password = switch_password,
+        self.switch_ip = switch_ip
+        self.switch_username = switch_username
+        self.switch_password = switch_password
         self.hardware_id = hardware_id
         self.interface = interface
         self.vlan_id = vlan_id
