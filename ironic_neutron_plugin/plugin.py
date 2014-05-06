@@ -148,7 +148,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         hardware_id = port["port"].get("switch:hardware_id")
         if hardware_id == attr.ATTR_NOT_SPECIFIED:
             hardware_id = None
-        return hardware_id   
+        return hardware_id
 
     def _get_portmaps_from_port(self, port):
         if "port" not in port:
@@ -166,7 +166,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         commit = port["port"].get("switch:commit")
         if commit == attr.ATTR_NOT_SPECIFIED:
             commit = False
-        return commit    
+        return commit
 
     def _get_ironic_portmaps(self, port, ironic_network):
         """Fetch and validate relevant switchports for a given device_id
@@ -222,10 +222,14 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 portmap = switch.PortMapController.create_portmap(p)
                 new_portmaps.append(portmap)
 
+        if ironic_network.trunked:
+            # We only want to return the primary portmap
+            new_portmaps = [p for p in new_portmaps if p["primary"]]
+
         return new_portmaps
 
     def _validate_port(self, ironic_portmaps, port, ironic_network):
-        
+
         switchport_ids = [p.id for p in ironic_portmaps]
         bound_network_ids = []
         if switchport_ids:
@@ -279,7 +283,6 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         commit = self._get_commit_from_port(port)
         hardware_id = self._get_hardware_id_from_port(port)
-        portmaps = self._get_portmaps_from_port(port)
 
         ironic_portmaps = self._get_ironic_portmaps(port, ironic_network)
 
@@ -287,7 +290,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         # in the databse for a particular hardware_id.
         if not ironic_portmaps:
             ironic_portmaps = self._create_ironic_portmaps(port, ironic_network)
-        
+
         # throws
         self._validate_port(ironic_portmaps, port, ironic_network)
 
@@ -329,7 +332,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
         old_hw_id = self._get_hardware_id_from_port(old_port)
         new_hw_id = self._get_hardware_id_from_port(port)
         if new_hw_id:
-            if (old_hw_id is not None) and (new_hw_id != old_hw_id): 
+            if (old_hw_id is not None) and (new_hw_id != old_hw_id):
                 msg = ("Updating switch:hardware_id not supported")
                 raise n_exc.BadRequest(
                     resource="port",
@@ -359,7 +362,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         if not ironic_portmaps:
             ironic_portmaps = self._create_ironic_portmaps(new_port, ironic_network)
-        
+
         # throws
         self._validate_port(ironic_portmaps, new_port, ironic_network)
 
@@ -407,7 +410,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         if not ironic_port:
             ironic_port = db.get_port(neutron_port["id"])
-        
+
         hardware_id = ironic_port.hardware_id
 
         if not ironic_portmaps:
