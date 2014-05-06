@@ -46,14 +46,13 @@ class DriverManager(object):
     def _get_ip(self, neutron_port):
         ips = neutron_port['fixed_ips']
         if len(ips) == 0:
-            raise base_driver.DriverException(
-                ('No fixed_ips assigned to port %s'
-                 % (neutron_port['id'])))
-        if len(ips) != 1:
+            return None
+        elif len(ips) > 1:
             raise base_driver.DriverException(
                 ('More than 1 fixed_ip assigned to port %s'
                  % (neutron_port['id'])))
-        return ips[0]['ip_address']
+        else:
+            return ips[0]['ip_address']
 
     def _get_portbindings(self, ironic_switch_port):
         return list(db.filter_portbindings(
@@ -133,6 +132,7 @@ class DriverManager(object):
                 self._set_portbinding_active(new_portbinding)
             return True
         except base_driver.DriverException as e:
+            self._delete_portbinding(neutron_port, ironic_switch_port)
             LOG.error('Failed configuring port: %s', e)
             return False
 
