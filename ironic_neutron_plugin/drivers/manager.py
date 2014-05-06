@@ -132,6 +132,8 @@ class DriverManager(object):
                 self._set_portbinding_active(new_portbinding)
             return True
         except base_driver.DriverException as e:
+            # TODO(morgabra) We really need a method that clears a port config and shuts it down.
+            # This will break for half-configured ports or ports with configurations we don't expect.
             self._delete_portbinding(neutron_port, ironic_switch_port)
             LOG.error('Failed configuring port: %s', e)
             return False
@@ -174,5 +176,8 @@ class DriverManager(object):
 
             return True
         except base_driver.DriverException as e:
+            # TODO(morgabra) We really need a method that clears a port config and shuts it down.
+            # This will break for half-configured ports or ports with configurations we don't expect.
+            self._delete_portbinding(neutron_port, ironic_switch_port)
             LOG.error('Failed configuring port: %s', e)
             return False
