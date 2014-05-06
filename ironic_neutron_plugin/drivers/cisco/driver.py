@@ -130,6 +130,10 @@ class CiscoDriver(base_driver.Driver):
                       "executed commands: %s" % (commands))
             return
 
+        if not commands:
+            LOG.debug("No commands to run")
+            return
+
         conn = self._connect(ip, username, password)
         try:
             LOG.debug("Executing commands: %s" % (commands))
