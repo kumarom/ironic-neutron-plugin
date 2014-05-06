@@ -153,7 +153,8 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             _add_vpc(portchan_int) +
 
             # IPSG
-            _bind_ip(ip, mac_address, vlan_id, portchan_int) +
+            # TODO(morgabra) This should probably be configurable/toggleable
+            #_bind_ip(ip, mac_address, vlan_id, portchan_int) +
 
             # ethernet
             _configure_interface('ethernet', eth_int) +
@@ -190,9 +191,9 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan add %s' % (vlan_id)] +
+            ['switchport trunk allowed vlan add %s' % (vlan_id)]
             # IPSG
-            _bind_ip(ip, mac_address, vlan_id, interface)
+            #_bind_ip(ip, mac_address, vlan_id, interface)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
@@ -201,15 +202,15 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
 def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
     portchan_int = _make_portchannel_interface(interface)
     eth_int = _make_ethernet_interface(interface)
-    
+
     if trunked:
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
+            ['switchport trunk allowed vlan remove %s' % (vlan_id)]
 
             # IPSG
-            _unbind_ip(ip, mac_address, vlan_id, portchan_int)
+            #_unbind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
