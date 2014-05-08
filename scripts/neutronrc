@@ -1,0 +1,2 @@
+export OS_URL="http://localhost:9696/"
+export OS_AUTH_STRATEGY="noauth"

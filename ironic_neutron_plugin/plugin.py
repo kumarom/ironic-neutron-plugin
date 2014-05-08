@@ -395,12 +395,21 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
     def get_ports(self, context, filters=None, fields=None,
                   sorts=None, limit=None, marker=None,
                   page_reverse=False):
+
+        # We want to allow filtering by the hardware_id extension field.
         if 'switch:hardware_id' in filters and filters['switch:hardware_id']:
             ports = db.filter_ports(hardware_id=filters['switch:hardware_id'])
-            ports = [self.get_port(context, p.port_id, fields) for p in ports]
-        else:
-            ports = super(IronicPlugin, self).get_ports(
-                context, filters, fields, sorts, limit, marker, page_reverse)
+            port_ids = [p.port_id for p in ports]
+
+            # no ports match that hardware_id, so we can bail early
+            if not port_ids:
+                return []
+            else:
+                ids = filters.get("id", [])
+                filters["id"] = ids + port_ids
+
+        ports = super(IronicPlugin, self).get_ports(
+            context, filters, fields, sorts, limit, marker, page_reverse)
         return [self._add_port_data(p) for p in ports]
 
     def _add_port_data(self, neutron_port, ironic_port=None, ironic_portmaps=None):
