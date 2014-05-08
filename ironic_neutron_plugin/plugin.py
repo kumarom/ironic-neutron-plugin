@@ -222,7 +222,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 portmap = switch.PortMapController.create_portmap(p)
                 new_portmaps.append(portmap)
 
-        if ironic_network.trunked:
+        if not ironic_network.trunked:
             # We only want to return the primary portmap
             new_portmaps = [p for p in new_portmaps if p["primary"]]
 
