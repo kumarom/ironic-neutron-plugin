@@ -6,5 +6,6 @@ AUTHORS
 ChangeLog
 devenv
 *.egg-info
+logs
 etc/neutron.conf
 coverage.xml

@@ -22,270 +22,324 @@ from ironic_neutron_plugin.db import models
 
 LOG = logging.getLogger(__name__)
 
-def create_port(port_id, commit, hardware_id):
-    session = db_api.get_session()
+
+class IronicDBException(Exception):
+    pass
+
+
+def create_port_ext(port_id, commit, trunked, hardware_id, session=None):
+    if not session:
+        session = db_api.get_session()
 
     with session.begin(subtransactions=True):
-        port = models.IronicPort(
+        port = models.PortExt(
             port_id=port_id,
             commit=commit,
+            trunked=trunked,
             hardware_id=hardware_id)
         session.add(port)
         return port
 
 
-def get_all_ports():
-    session = db_api.get_session()
-    return (session.query(models.IronicPort).all())
-
-
-def get_port(port_id):
-    session = db_api.get_session()
-
-    try:
-        return (session.query(models.IronicPort).
-                get((port_id)))
-    except orm.exc.NoResultFound:
-        return None
-
-
-def filter_ports(**kwargs):
-
-    session = db_api.get_session()
-    return (session.query(models.IronicPort).
-            filter_by(**kwargs))
-
-
-def update_port_commit(port_id, commit):
-    session = db_api.get_session()
+def get_port_ext(port_id, session=None):
+    if not session:
+        session = db_api.get_session()
 
     with session.begin(subtransactions=True):
-        port = (session.query(models.IronicPort).
-                get(port_id))
-        port.commit = commit
-        session.add(port)
-        session.flush()
+        try:
+            return (session.query(models.PortExt).
+                    get((port_id)))
+        except orm.exc.NoResultFound:
+            return None
 
 
-def update_port_hardware_id(port_id, hardware_id):
-    session = db_api.get_session()
+def filter_port_ext(session=None, **kwargs):
+    if not session:
+        session = db_api.get_session()
 
     with session.begin(subtransactions=True):
-        port = (session.query(models.IronicPort).
+        return (session.query(models.PortExt).
+                filter_by(**kwargs))
+
+
+def update_port_ext(port_id, commit=None, hardware_id=None, session=None):
+    if not session:
+        session = db_api.get_session()
+
+    updated = False
+
+    with session.begin(subtransactions=True):
+        port = (session.query(models.PortExt).
                 get(port_id))
-        port.hardware_id = hardware_id
-        session.add(port)
-        session.flush()
+
+        if commit != None:
+            port.commit = commit
+            updated = True
+
+        if hardware_id != None:
+            port.hardware_id = hardware_id
+            updated = True
+
+        if updated:
+            session.add(port)
+            session.flush()
+
+        return port
 
 
-def delete_port(port_id):
-    session = db_api.get_session()
+def delete_port_ext(port_id, session=None):
+    if not session:
+        session = db_api.get_session()
 
-    port = get_port(port_id)
+    port = get_port_ext(port_id, session)
 
     if not port:
         return False  # TODO(morgabra) throw probably
 
-    session.delete(port)
-    session.flush()
-    return True
+    with session.begin(subtransactions=True):
+        session.delete(port)
+        session.flush()
+        return True
 
 
-def create_portbinding(port_id, network_id, switch_port_id):
-    session = db_api.get_session()
+def create_switchport_binding(port_id, network_id, switch_port_id, state=None, session=None):
+    if not session:
+        session = db_api.get_session()
 
     with session.begin(subtransactions=True):
-        portbinding = models.IronicPortBinding(
+        portbinding = models.SwitchPortBinding(
             port_id=port_id,
             network_id=network_id,
-            switch_port_id=switch_port_id)
+            switch_port_id=switch_port_id,
+            state=None)
         session.add(portbinding)
         return portbinding
 
 
-def get_all_portbindings():
-    session = db_api.get_session()
-    return (session.query(models.IronicPortBinding).all())
-
-
-def get_portbinding(port_id, network_id, switch_port_id):
-    session = db_api.get_session()
-
-    try:
-        return (session.query(models.IronicPortBinding).
-                get((port_id, network_id, switch_port_id)))
-    except orm.exc.NoResultFound:
-        return None
-
-
-def filter_portbindings(**kwargs):
-    session = db_api.get_session()
-    return (session.query(models.IronicPortBinding).
-            filter_by(**kwargs))
-
-
-def filter_portbindings_by_switch_port_ids(ids):
-    session = db_api.get_session()
-    return (session.query(models.IronicPortBinding).
-            filter(models.IronicPortBinding.switch_port_id.in_(ids)))
-
-
-def update_portbinding_state(port_id, network_id, switch_port_id, state):
-    session = db_api.get_session()
+def get_all_switchport_bindings(session=None):
+    if not session:
+        session = db_api.get_session()
 
     with session.begin(subtransactions=True):
-        portbinding = (session.query(models.IronicPortBinding).
+        return (session.query(models.SwitchPortBinding).all())
+
+
+def get_switchport_binding(port_id, network_id, switch_port_id, session=None):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        try:
+            return (session.query(models.SwitchPortBinding).
+                    get((port_id, network_id, switch_port_id)))
+        except orm.exc.NoResultFound:
+            return None
+
+
+def filter_switchport_bindings(session=None, **kwargs):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        return (session.query(models.SwitchPortBinding).
+                filter_by(**kwargs))
+
+
+def filter_switchport_bindings_by_switch_port_ids(ids, session=None):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        return (session.query(models.SwitchPortBinding).
+                filter(models.SwitchPortBinding.switch_port_id.in_(ids)))
+
+
+def update_switchport_binding_state(port_id, network_id, switch_port_id, state, session=None):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        portbinding = (session.query(models.SwitchPortBinding).
                        get((port_id, network_id, switch_port_id)))
         portbinding.state = state
         session.add(portbinding)
         session.flush()
+        return portbinding
 
 
-def delete_portbinding(port_id, network_id, switch_port_id):
-    session = db_api.get_session()
+def delete_switchport_binding(port_id, network_id, switch_port_id, session=None):
+    if not session:
+        session = db_api.get_session()
 
-    portbinding = get_portbinding(port_id, network_id, switch_port_id)
+    portbinding = get_switchport_binding(
+        port_id, network_id, switch_port_id, session=session)
 
     if not portbinding:
         return False  # TODO(morgabra) throw probably
 
-    session.delete(portbinding)
-    session.flush()
-    return True
+    with session.begin(subtransactions=True):
+        session.delete(portbinding)
+        session.flush()
+        return True
 
 
-def create_portmap(switch_id, port, hardware_id, primary, **kwargs):
-    session = db_api.get_session()
+def create_switchports(switchports,
+                      session=None):
+    if not session:
+        session = db_api.get_session()
 
-    portmap = models.IronicSwitchPort(
-        switch_id=switch_id,
-        port=port,
-        hardware_id=hardware_id,
-        primary=primary,
-        **kwargs)
-    session.add(portmap)
-    session.flush()
-    portmap.switch
-    return portmap
-
-
-def get_all_portmaps():
-    session = db_api.get_session()
-    return (session.query(models.IronicSwitchPort).all())
+    created_switchports = []
+    with session.begin(subtransactions=True):
+        for switchport in switchports:
+            sp = models.SwitchPort(
+                **switchport)
+            session.add(sp)
+            sp.switch  # aggresively load the switch model
+            created_switchports.append(sp)
+        session.flush()
+        return created_switchports
 
 
-def get_portmap(portmap_id):
-    session = db_api.get_session()
-
-    try:
-        return (session.query(models.IronicSwitchPort).
-                options(orm.subqueryload(models.IronicSwitchPort.switch)).
-                get(portmap_id))
-    except orm.exc.NoResultFound:
-        return None
-
-
-def filter_portmaps(**kwargs):
-
-    session = db_api.get_session()
-    return (session.query(models.IronicSwitchPort).
-            options(orm.subqueryload(models.IronicSwitchPort.switch)).
-            filter_by(**kwargs))
-
-
-def delete_portmap(portmap_id):
-    session = db_api.get_session()
-    portmap = session.query(models.IronicSwitchPort).get(portmap_id)
-    session.delete(portmap)
-    session.flush()
-    return True
-
-
-def create_switch(switch_id, switch_ip, username, password, switch_type):
-    session = db_api.get_session()
+def get_all_switchports(session=None):
+    if not session:
+        session = db_api.get_session()
 
     with session.begin(subtransactions=True):
-        switch = models.IronicSwitch(
-            id=switch_id,
-            ip=switch_ip,
+        return (session.query(models.SwitchPort).
+                options(orm.subqueryload(models.SwitchPort.switch)).all())
+
+
+def get_switchports_by_ids(ids, session=None):
+    if not ids:
+        return []
+
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        return (session.query(models.SwitchPort).
+                options(orm.subqueryload(models.SwitchPort.switch)).
+                filter(models.SwitchPort.id.in_(ids)))
+
+
+def filter_switchports(session=None, **kwargs):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        return (session.query(models.SwitchPort).
+                options(orm.subqueryload(models.SwitchPort.switch)).
+                filter_by(**kwargs))
+
+
+def delete_switchports(switchport_ids, session=None):
+
+    if not session:
+        session = db_api.get_session()
+
+    if not switchport_ids:
+        return False
+
+    with session.begin(subtransactions=True):
+        for switchport_id in switchport_ids:
+            try:
+                switchport = (session.query(models.SwitchPort).
+                              get(switchport_id))
+            except orm.exc.NoResultFound:
+                switchport = None  # TODO(morgabra) this should throw.
+
+            if switchport:
+                session.delete(switchport)
+        session.flush()
+        return True
+
+
+def compare_switchports(sp_models, sp_dicts, with_id=False, session=None):
+    """
+    Compare a hardware_ids switchports with a given list of dicts.
+
+    TODO(morgbara) Can you overload __eq__ on an sqlalchemy model? I actually
+    want functional equivalence, unrelated to the model ID.
+    """
+
+    if not session:
+        session = db_api.get_session()
+
+    if len(sp_models) != len(sp_dicts):
+        return False
+
+    sp_models = [m.as_dict() for m in sp_models]
+    sp_dicts = [models.SwitchPort.make_dict(d) for d in sp_dicts]
+
+    if not with_id:
+        for m in sp_models:
+            m.pop("id")
+        for d in sp_dicts:
+            d.pop("id")
+
+    for d in sp_dicts:
+        if d not in sp_models:
+            return False
+
+    return True
+
+
+def create_switch(id, host, username, password, switch_type, description=None, session=None):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+        switch = models.Switch(
+            id=id,
+            host=host,
             username=username,
             password=password,
-            type=switch_type)
+            type=switch_type,
+            description=description)
         session.add(switch)
         return switch
 
 
-def get_switch(switch_id):
-    session = db_api.get_session()
+def get_switch(switch_id, session=None):
+    if not session:
+        session = db_api.get_session()
 
-    try:
-        return (session.query(models.IronicSwitch).
-                get(switch_id))
-    except orm.exc.NoResultFound:
-        return None
-
-
-def filter_switches(**kwargs):
-    session = db_api.get_session()
-    return (session.query(models.IronicSwitch).
-            filter_by(**kwargs))
+    with session.begin(subtransactions=True):
+        try:
+            return (session.query(models.Switch).
+                    get(switch_id))
+        except orm.exc.NoResultFound:
+            return None
 
 
-def get_all_switches():
-    session = db_api.get_session()
-    return (session.query(models.IronicSwitch).all())
+def filter_switches(session=None, **kwargs):
+    if not session:
+        session = db_api.get_session()
+
+    with session.begin(subtransactions=True):
+
+        return (session.query(models.Switch).
+                filter_by(**kwargs))
 
 
-def delete_switch(switch_id):
-    session = db_api.get_session()
+def get_all_switches(session=None):
+    if not session:
+        session = db_api.get_session()
 
-    switch = get_switch(switch_id)
+    with session.begin(subtransactions=True):
+        return (session.query(models.Switch).all())
+
+
+def delete_switch(switch_id, session=None):
+    if not session:
+        session = db_api.get_session()
+
+    switch = get_switch(switch_id, session=session)
 
     if not switch:
         return False  # TODO(morgabra) Throw probably
 
-    session.delete(switch)
-    session.flush()
-    return True
-
-
-def get_all_networks():
-    session = db_api.get_session()
-    return (session.query(models.IronicNetwork).all())
-
-
-def get_network(network_id):
-    session = db_api.get_session()
-    try:
-        return (session.query(models.IronicNetwork).
-                get(network_id))
-    except orm.exc.NoResultFound:
-        return None
-
-
-def create_network(network_id, physical_network,
-                   segmentation_id, network_type, trunked):
-    session = db_api.get_session()
-
     with session.begin(subtransactions=True):
-        network = models.IronicNetwork(
-            network_id=network_id,
-            physical_network=physical_network,
-            segmentation_id=segmentation_id,
-            network_type=network_type,
-            trunked=trunked)
-        session.add(network)
-        return network
-
-
-def delete_network(network_id):
-    session = db_api.get_session()
-
-    network = get_network(network_id)
-
-    if not network:
-        return False  # TODO(morgabra) Throw probably
-
-    session.delete(network)
-    session.flush()
-    return True
+        session.delete(switch)
+        session.flush()
+        return True

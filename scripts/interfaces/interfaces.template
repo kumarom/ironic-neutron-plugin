@@ -1,0 +1,41 @@
+# Injected by Nova on instance boot
+#
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+{% for ifc in interfaces %}
+auto {{ ifc.name }}
+iface {{ ifc.name }} inet manual
+    bond-master bond0
+{% endfor %}
+
+auto bond0
+iface bond0 inet manual
+    bond-mode 4
+    bond-miimon 100
+    bond-lacp-rate 1
+    bond-slaves{% for ifc in interfaces %} {{ ifc.name }}{% endfor %}
+
+{% for ifc in interfaces -%}
+    {% if ifc.address.startswith('50.57.63') %}
+        {% set vlan = '101' %}
+    {% elif ifc.address.startswith('10.184.255') %}
+        {% set vlan = '499' %}
+    {% else %}
+        {% set vlan = '1' %}
+    {% endif %}
+
+auto bond0.{{vlan}}
+iface bond0.{{vlan}} inet static
+    vlan_raw_device bond0
+    address {{ ifc.address }}
+    netmask {{ ifc.netmask }}
+{%- if ifc.gateway %}
+    gateway {{ ifc.gateway }}
+{%- endif %}
+
+{%- endfor %}

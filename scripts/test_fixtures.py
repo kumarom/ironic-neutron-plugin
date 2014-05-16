@@ -7,11 +7,10 @@ class FixtureException(Exception):
 
 DECOM_NET = {
     "name": "DECOM",
-    "provider:physical_network": "DECOM",
+    "provider:physical_network": "decom",
     "provider:network_type": "vlan",
     "provider:segmentation_id": 50,
-    "tenant_id": "mytenant",
-    "switch:trunked": False
+    "tenant_id": "mytenant"
 }
 DECOM_SUBNET = {
     "network_id": None,
@@ -22,11 +21,10 @@ DECOM_SUBNET = {
 
 PUB_NET = {
    "name": "PUBLIC-Cust",
-   "provider:physical_network": "PUBLIC-Cust",
+   "provider:physical_network": "pubnet",
    "provider:network_type": "vlan",
    "provider:segmentation_id": 301,
-   "tenant_id": "mytenant",
-   "switch:trunked": True
+   "tenant_id": "mytenant"
 }
 PUB_SUBNET = {
     "network_id": None,
@@ -37,11 +35,10 @@ PUB_SUBNET = {
 
 SNET_NET = {
    "name": "SNET-Cust",
-   "provider:physical_network": "SNET-Cust",
+   "provider:physical_network": "svcnet",
    "provider:network_type": "vlan",
    "provider:segmentation_id": 201,
-   "tenant_id": "mytenant",
-   "switch:trunked": True
+   "tenant_id": "mytenant"
 }
 SNET_SUBNET = {
     "network_id": None,
@@ -52,14 +49,14 @@ SNET_SUBNET = {
 
 SWITCH_1 = {
     "id": "switch1",
-    "ip": "10.127.75.135",
+    "host": "10.127.75.135",
     "username": "admin",
     "password": "admin",
     "type": "cisco"
 }
 SWITCH_2 = {
     "id": "switch2",
-    "ip": "10.127.75.136",
+    "host": "10.127.75.136",
     "username": "admin",
     "password": "admin",
     "type": "cisco"
@@ -99,22 +96,23 @@ def create_switch(url, switch):
     r = r.json()
     return r['switch']['id']
 
-def create_portmap(url, number, switch_id, primary):
-    portmap = {
+def create_switchport(url, number, name, switch_id, primary):
+    switchport = {
       "switch_id": switch_id,
       "hardware_id": "device%s" % number,
-      "port": str(number),
+      "name": name,
+      "port": "Eth1/%s" % str(number),
       "primary": primary
     }
-    r = requests.post('%s/v2.0/portmaps' % url,
+    r = requests.post('%s/v2.0/switchports' % url,
                       headers={'Content-Type': 'application/json'},
-                      data=json.dumps({'portmap': portmap}))
+                      data=json.dumps({'switchport': switchport}))
 
     if r.status_code != 200:
-        raise FixtureException('create_portmap failed: %s' % r.text)
+        raise FixtureException('create_switchport failed: %s' % r.text)
 
     r = r.json()
-    return r['portmap']['id']
+    return r['switchport']['id']
 
 def main():
     parser = argparse.ArgumentParser(description='Add some development fixtures.')
@@ -138,9 +136,9 @@ def main():
 
 
     for i in xrange(5):
-      create_portmap(url, i, switch1_id, primary=True)
-      create_portmap(url, i, switch2_id, primary=False)
-      print 'created portmaps for device%s' % i
+      create_switchport(url, i, "eth0", switch1_id, primary=True)
+      create_switchport(url, i, "eth1", switch2_id, primary=False)
+      print 'created switchports for device%s' % i
 
 if __name__ == "__main__":
     main()

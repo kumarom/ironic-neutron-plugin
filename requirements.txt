@@ -9,4 +9,4 @@ paramiko>=1.7.4
 
 # neutron + dependencies
 mysql-python>=1.2.5
--e git+https://github.com/openstack/neutron.git@4b79389566f57225d32120e3509f7e871330daf5#egg=neutron
+-e git+https://github.com/openstack/neutron.git@fab50bd4b3cc480b7a8fa7f6c33c3ef2e19b3438#egg=neutron

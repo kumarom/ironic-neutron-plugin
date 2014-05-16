@@ -18,10 +18,11 @@ Implements a Nexus-OS NETCONF over SSHv2 API Client.
 
 This is lifted partially from the cisco ml2 mechanism.
 """
+from oslo.config import cfg
+
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
-from ironic_neutron_plugin import config
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
 
@@ -35,7 +36,7 @@ class CiscoException(base_driver.DriverException):
 class CiscoDriver(base_driver.Driver):
 
     def __init__(self):
-        self.dry_run = config.get_ironic_config().dry_run
+        self.dry_run = cfg.CONF.ironic.dry_run
         self.ncclient = None
 
     def create(self, port):
@@ -125,19 +126,18 @@ class CiscoDriver(base_driver.Driver):
 
     def _run_commands(self, ip, username, password, commands):
 
-        if self.dry_run:
-            LOG.debug("Dry run is enabled, would have "
-                      "executed commands: %s" % (commands))
-            return
-
         if not commands:
             LOG.debug("No commands to run")
             return
 
+        LOG.info("Switch ip:%s executing commands: %s" % (ip, commands))
+
+        if self.dry_run:
+            LOG.debug("Dry run is enabled, skipping")
+            return
+
         conn = self._connect(ip, username, password)
         try:
-            LOG.debug("Executing commands: %s" % (commands))
-
             conn.command(commands)
         except Exception as e:
             raise CiscoException(e)

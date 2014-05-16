@@ -12,385 +12,338 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from neutron.db import api as db_api
+from neutron.api.v2 import attributes
 
-from neutron.db import agentschedulers_db
-from neutron.db import allowedaddresspairs_db as addr_pair_db
+from sqlalchemy.orm import exc as sa_exc
+from neutron.common import exceptions as exc
+
+from neutron.common import constants as const
+
+from neutron.extensions import extra_dhcp_opt as edo_ext
+from neutron.extensions import allowedaddresspairs as addr_pair
+from neutron.plugins.ml2.common import exceptions as ml2_exc
+from neutron.openstack.common import excutils
+
+from neutron.db import models_v2
+
+from neutron.plugins.ml2 import driver_context
+
 from neutron.db import db_base_plugin_v2
-from neutron.db import external_net_db
-from neutron.db import extradhcpopt_db
-from neutron.db import securitygroups_rpc_base as sg_db_rpc
-from neutron.db import quota_db  # noqa
 
+from neutron.plugins.ml2 import plugin
+from neutron.plugins.ml2 import driver_api as api
 
 from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.drivers import manager
 from ironic_neutron_plugin.extensions import switch
 
-from neutron.api.v2 import attributes as attr
-from neutron.common import exceptions as n_exc
 from neutron.openstack.common import log as logging
+
+from oslo.config import cfg
 
 LOG = logging.getLogger(__name__)
 
 
-class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
-                   external_net_db.External_net_db_mixin,
-                   sg_db_rpc.SecurityGroupServerRpcMixin,
-                   agentschedulers_db.DhcpAgentSchedulerDbMixin,
-                   addr_pair_db.AllowedAddressPairsMixin,
-                   extradhcpopt_db.ExtraDhcpOptMixin):
+ironic_opts = [
+    cfg.BoolOpt("dry_run",
+                default=False,
+                help="Log only, but exersize the mechanism."),
+    cfg.StrOpt("credential_secret",
+               help=("Secret AES key for encrypting switch credentials "
+                     " in the datastore."))
+]
 
-    __native_bulk_support = False
-    __native_pagination_support = False
-    __native_sorting_support = True
+cfg.CONF.register_opts(ironic_opts, "ironic")
 
-    supported_extension_aliases = ["switch", "external-net", "binding",
-                                   "quotas", "security-group", "agent",
-                                   "dhcp_agent_scheduler",
-                                   "multi-provider", "allowed-address-pairs",
-                                   "extra_dhcp_opt", "provider"]
 
-    def __init__(self):
-        super(IronicPlugin, self).__init__()
-        db_api.configure_db()
+class IronicMl2Plugin(plugin.Ml2Plugin):
+    """
+    Base Ml2Plugin with added extensions:
+        1) physical switch credential management/port mappings
+        2) "commit" flag on the port object
+        3) "trunked" flag on the port object
 
-        self.driver_manager = manager.DriverManager()
+    A subclass would not be necessary if:
+        1) You could load extensions from a mechanism/config file/something
+        2) The mech_context contained the request body
+           (for extension field processing)
 
-        LOG.info("Ironic plugin initialized.")
+    TODO(morgabra) Some of this stuff might make it upstream with some attention
+    (physical portmaps?), but other stuff might be a harder sell. ("commit" flag)
 
-    def _validate_network_extensions(self, network):
+    TODO(morgabra) Currently there's an additional driver abstraction layer
+    for the mechanism, which should probably be split out in leu of different
+    mechanisms that check switch:port["type"]?
 
-        physical_network = network["network"].get("provider:physical_network")
-        if physical_network == attr.ATTR_NOT_SPECIFIED:
-            raise n_exc.BadRequest(
-                resource="network",
-                msg="'provider:physical_network' is required")
+    TODO(morgabra) It seems like we should use the portbinding extension
+    in some capacity, I don't understand it.
 
-        network_type = network["network"].get("provider:network_type")
-        if network_type == attr.ATTR_NOT_SPECIFIED:
-            raise n_exc.BadRequest(
-                resource="network",
-                msg="'provider:network_type' is required")
+    TODO(morgabra) Does "trunked" belong on the port or network?
 
-        segmentation_id = network["network"].get("provider:segmentation_id")
-        if segmentation_id == attr.ATTR_NOT_SPECIFIED:
-            raise n_exc.BadRequest(
-                resource="network",
-                msg="'provider:segmentation_id' is required")
+    TODO(morgabra) "commit" is a strange feature, separating the neturon
+    data model from the actual network configuration. This was a result
+    of nova creating ports for the ironic virt driver before we were ready
+    to realize that configuration on the switch. I'm not sure it's a great
+    idea and maybe changing nova behavior would be better? (Pushing the port)
+    """
 
-        trunked = bool(network["network"].get("switch:trunked"))
+    _supported_extension_aliases = (
+        plugin.Ml2Plugin._supported_extension_aliases
+        + ["switch", "commit", "trunked"]
+    )
 
-        return {
-            "physical_network": physical_network,
-            "network_type": network_type,
-            "segmentation_id": segmentation_id,
-            "trunked": trunked
-        }
+    db_base_plugin_v2.NeutronDbPluginV2.register_dict_extend_funcs(
+        attributes.PORTS, ['_find_port_dict_extensions'])
+    db_base_plugin_v2.NeutronDbPluginV2.register_dict_extend_funcs(
+        attributes.PORT, ['_find_port_dict_extensions'])
 
-    def create_network(self, context, network):
-        #TODO(morgabra) Actually provision vlan or whatever
-        network_extension_data = self._validate_network_extensions(
-            network)
+    def _get_port_attr(self, port, key):
+        if "port" not in port:
+            port = {"port": port}
 
-        neutron_network = super(IronicPlugin, self).create_network(
-            context, network)
+        val = port["port"].get(key)
+        if val == attributes.ATTR_NOT_SPECIFIED:
+            val = None
+        return val
 
-        ironic_network = db.create_network(
-            neutron_network['id'],
-            **network_extension_data
-        )
-        return self._add_network_data(neutron_network, ironic_network)
+    def _find_port_dict_extensions(self, port_res, port_db,
+                                   port_ext=None, switchports=None, session=None):
+        """Looks up extension data and updates port_res."""
+        if not port_ext:
+            port_ext = db.get_port_ext(port_res["id"], session=session)
+            port_ext = port_ext.as_dict()
 
-    def delete_network(self, context, id):
-        # TODO(morgabra) This needs implemented
-        res = super(IronicPlugin, self).delete_network(context, id)
-        db.delete_network(id)
-        return res
+        if not switchports:
+            switchports = []
+            if port_ext["hardware_id"]:
+                switchports = db.filter_switchports(
+                    hardware_id=port_ext["hardware_id"], session=session)
+            switchports = [sp.as_dict() for sp in switchports]
 
-    def update_network(self, context, id, network):
-        return super(IronicPlugin, self).update_network(context, id, network)
+        port_res["switch:ports"] = switchports
+        port_res["switch:hardware_id"] = port_ext["hardware_id"]
+        port_res["commit"] = port_ext["commit"]
+        port_res["trunked"] = port_ext["trunked"]
 
-    def get_network(self, context, id, fields=None):
-        network = super(IronicPlugin, self).get_network(context, id, fields)
-        return self._add_network_data(network)
+    def _create_port_ext(self, res_port, req_port, session=None):
+        """Create db model to keep track of extension data."""
+        commit = self._get_port_attr(req_port, "commit")
+        trunked = self._get_port_attr(req_port, "trunked")
+        hardware_id = self._get_port_attr(req_port, "switch:hardware_id")
+        port_ext = db.create_port_ext(
+            port_id=res_port["id"],
+            commit=commit,
+            trunked=trunked,
+            hardware_id=hardware_id,
+            session=session)
+        return port_ext.as_dict()
 
-    def get_networks(self, context, filters=None, fields=None,
-                     sorts=None, limit=None, marker=None,
-                     page_reverse=False):
-        networks = super(IronicPlugin, self).get_networks(
-            context, filters, fields, sorts, limit, marker, page_reverse)
-        return [self._add_network_data(n) for n in networks]
+    def _update_port_ext(self, res_port, req_port, session=None):
+        """Update db model keeping track of extension data."""
+        commit = self._get_port_attr(req_port, "commit")
+        hardware_id = self._get_port_attr(req_port, "switch:hardware_id")
+        port_ext = db.update_port_ext(
+            port_id=res_port["id"],
+            commit=commit,
+            hardware_id=hardware_id,
+            session=session)
+        return port_ext.as_dict()
 
-    def _add_network_data(self, neutron_network, ironic_network=None):
-        """Update default network response with provider network
-        info (segmentation_id, etc).
+    def _update_switchports(self, res_port, req_port, session=None):
+        hardware_id = self._get_port_attr(req_port, "switch:hardware_id")
+        switchports = self._get_port_attr(req_port, "switch:ports")
+
+        if not switchports:
+            return []
+
+        if switchports and not hardware_id:
+            msg = "switch:ports requires switch:hardware_id"
+            raise exc.InvalidInput(error_message=msg)
+
+        # We add hardware_id from the top-level object to each switchport, which
+        # the portmap controller expects and allows us to use the same code.
+        for sp in switchports:
+            sp["hardware_id"] = hardware_id
+
+        # TODO(morgabra) This is not all that intuitive and maybe wrong. Instead
+        # of erroring if there are switchports already available for the hardware_id
+        # and requiring a separate call to delete them, we can just update them
+        # if they aren't in use (which update_portmaps() does for us.)
+        switchports = switch.SwitchPortController.update_switchports(
+            switchports, session=session)
+        return [sp.as_dict() for sp in switchports]
+
+    def _validate_port_can_commit(self, res_port, req_port, session=None):
         """
-        if not ironic_network:
-            ironic_network = db.get_network(neutron_network["id"])
-        if ironic_network:
-            neutron_network.update(ironic_network.as_dict())
-        return neutron_network
-
-    def create_subnet(self, context, subnet):
-        return super(IronicPlugin, self).create_subnet(context, subnet)
-
-    def delete_subnet(self, context, id):
-        return super(IronicPlugin, self).delete_subnet(context, id)
-
-    def update_subnet(self, context, id, subnet):
-        return super(IronicPlugin, self).update_subnet(context, id, subnet)
-
-    def _get_hardware_id_from_port(self, port):
-        if "port" not in port:
-            port = {"port": port}
-
-        hardware_id = port["port"].get("switch:hardware_id")
-        if hardware_id == attr.ATTR_NOT_SPECIFIED:
-            hardware_id = None
-        return hardware_id
-
-    def _get_portmaps_from_port(self, port):
-        if "port" not in port:
-            port = {"port": port}
-
-        portmaps = port["port"].get("switch:portmaps")
-        if portmaps == attr.ATTR_NOT_SPECIFIED:
-            portmaps = []
-        return portmaps
-
-    def _get_commit_from_port(self, port):
-        if "port" not in port:
-            port = {"port": port}
-
-        commit = port["port"].get("switch:commit")
-        if commit == attr.ATTR_NOT_SPECIFIED:
-            commit = False
-        return commit
-
-    def _get_ironic_portmaps(self, port, ironic_network):
-        """Fetch and validate relevant switchports for a given device_id
-        suitable for attaching to the given ironic network.
+        Poorly named function that determines if a port can actually be configured
+        given the state of the system. (ex. do not allow a non-trunked port to be
+        committed to a running trunked config.)
         """
-        hardware_id = self._get_hardware_id_from_port(port)
-        LOG.info(
-            'Fetching portmaps for hardware_id %s' % (hardware_id))
+        switchport_ids = [p["id"] for p in res_port["switch:ports"]]
 
-        if hardware_id:
-            # if trunked we will configure all ports, if access only the primary.
-            if ironic_network.trunked:
-                ironic_portmaps = list(db.filter_portmaps(
-                    hardware_id=hardware_id))
-            else:
-                ironic_portmaps = list(db.filter_portmaps(
-                    hardware_id=hardware_id, primary=True))
-            return ironic_portmaps
-        return []
+        if not switchport_ids:
+            msg = ("Cannot attach, no switchports found")
+            raise exc.InvalidInput(error_message=msg)
 
-    def _create_ironic_portmaps(self, port, ironic_network):
-        hardware_id = self._get_hardware_id_from_port(port)
-        LOG.info('Creating portmaps for hardware_id %s' % (hardware_id))
-
-        portmaps = self._get_portmaps_from_port(port)
-        new_portmaps = []
-
-        if portmaps and not hardware_id:
-            msg = "Must set switch:hardware_id with switch:portmaps"
-            raise n_exc.BadRequest(
-                resource="port",
-                msg=msg)
-
-        if portmaps:
-            # You may only have a maximum of 2 portmaps
-            if len(portmaps) > 2:
-                msg = ("A maximum of 2 portmaps are allowed, "
-                       "%s given" % (len(portmaps)))
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
-
-            # You may only have 1 primary portmap
-            is_primary = set([pm["primary"] for pm in portmaps])
-            if (len(is_primary) != len(portmaps)) or (True not in is_primary):
-                msg = ("Exactly 1 portmap must be primary")
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
-
-            for p in portmaps:
-                p["hardware_id"] = hardware_id
-                portmap = switch.PortMapController.create_portmap(p)
-                new_portmaps.append(portmap)
-
-        if not ironic_network.trunked:
-            # We only want to return the primary portmap
-            new_portmaps = [p for p in new_portmaps if p["primary"]]
-
-        return new_portmaps
-
-    def _validate_port(self, ironic_portmaps, port, ironic_network):
-
-        switchport_ids = [p.id for p in ironic_portmaps]
-        bound_network_ids = []
+        bound_port_ids = []
         if switchport_ids:
             # Fetch all existing networks we are attached to.
-            portbindings = list(db.filter_portbindings_by_switch_port_ids(
-                [p.id for p in ironic_portmaps]))
-            bound_network_ids = [pb.network_id for pb in portbindings]
+            portbindings = list(db.filter_switchport_bindings_by_switch_port_ids(
+                switchport_ids))
+            bound_port_ids = set([pb.port_id for pb in portbindings])
 
         # We can't attach to a non-trunked network if the port is already
         # attached to another network.
-        if bound_network_ids and (ironic_network.trunked is False):
+        if bound_port_ids and (res_port["trunked"] is False):
             msg = ("Cannot attach non-trunked network, port "
-                   "already bound to network(s) %s" % (bound_network_ids))
-            raise n_exc.BadRequest(
-                resource="port",
-                msg=msg)
+                   "already bound to network(s) %s" % (bound_port_ids))
+            raise exc.InvalidInput(error_message=msg)
 
-        for bound_network_id in bound_network_ids:
-
-            # We can't attach to the same network again.
-            if ironic_network.network_id == bound_network_id:
-                msg = ("Already attached to "
-                       "network %s" % (ironic_network.network_id))
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
+        for bound_port_id in bound_port_ids:
 
             # We can't attach a trunked network if we are already attached
             # to a non-trunked network.
-            bound_network = db.get_network(bound_network_id)
-            if not bound_network.trunked:
-                msg = ("Already attached to non-trunked "
-                       "network %s" % (bound_network_id))
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
+            port_ext = db.get_port_ext(bound_port_id)
+            if not port_ext.trunked:
+                msg = ("Already attached via non-trunked "
+                       "port %s" % (bound_port_id))
+                raise exc.InvalidInput(error_message=msg)
 
-    def _get_ironic_network(self, network_id):
-        ironic_network = db.get_network(network_id)
-        if not ironic_network:
-            msg = "No ironic network found for network %s" % (network_id)
-            raise n_exc.BadRequest(
-                resource="port",
-                msg=msg)
-        return ironic_network
+    def _delete_port_ext(self, port_id):
+        db.delete_port_ext(port_id)
 
     def create_port(self, context, port):
+        do_commit = False
 
-        network_id = port["port"]["network_id"]
-        ironic_network = self._get_ironic_network(network_id)
+        attrs = port['port']
+        attrs['status'] = const.PORT_STATUS_DOWN
 
-        commit = self._get_commit_from_port(port)
-        hardware_id = self._get_hardware_id_from_port(port)
+        session = context.session
+        with session.begin(subtransactions=True):
+            self._ensure_default_security_group_on_port(context, port)
+            sgids = self._get_security_groups_on_port(context, port)
+            dhcp_opts = port['port'].get(edo_ext.EXTRADHCPOPTS, [])
+            result = super(plugin.Ml2Plugin, self).create_port(context, port)
 
-        ironic_portmaps = self._get_ironic_portmaps(port, ironic_network)
+            # Process extension data
+            port_ext = self._create_port_ext(result, port, session=session)
+            switchports = self._update_switchports(result, port, session=session)
+            self._find_port_dict_extensions(result, None,
+                port_ext=port_ext, switchports=switchports)
+            # Validate we can actually configure this port
+            if result["commit"]:
+                do_commit = True
+                self._validate_port_can_commit(
+                    result, None, session=session)
 
-        # TODO(morgabra) This obviously won't do anything if there already exist portmaps
-        # in the databse for a particular hardware_id.
-        if not ironic_portmaps:
-            ironic_portmaps = self._create_ironic_portmaps(port, ironic_network)
+            self._process_port_create_security_group(context, result, sgids)
+            network = self.get_network(context, result['network_id'])
+            mech_context = driver_context.PortContext(self, context, result,
+                                                      network)
+            self._process_port_binding(mech_context, attrs)
+            result[addr_pair.ADDRESS_PAIRS] = (
+                self._process_create_allowed_address_pairs(
+                    context, result,
+                    attrs.get(addr_pair.ADDRESS_PAIRS)))
+            self._process_port_create_extra_dhcp_opts(context, result,
+                                                      dhcp_opts)
 
-        # throws
-        self._validate_port(ironic_portmaps, port, ironic_network)
+            self.mechanism_manager.create_port_precommit(mech_context)
 
-        port = super(IronicPlugin, self).create_port(context, port)
-        ironic_port = db.create_port(port["id"], commit, hardware_id)
-
-        self._add_port_data(port, ironic_port=ironic_port, ironic_portmaps=ironic_portmaps)
-
-        if commit:
-            success = self.driver_manager.attach(
-                port, ironic_network, ironic_portmaps)
-
-            if not success:
-                port_id = port["id"]
-                self.delete_port(context, port_id)
-                msg = "Failed configuring port: %s" % port_id
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
-
-        return port
-
-    def delete_port(self, context, id):
-        port = self.get_port(context, id)
-        ironic_network = db.get_network(port['network_id'])
-
-        ironic_portmaps = self._get_ironic_portmaps(port, ironic_network)
-
-        self.driver_manager.detach(port, ironic_network, ironic_portmaps)
-        db.delete_port(id)
-        return super(IronicPlugin, self).delete_port(context, id)
+        try:
+            if do_commit:
+                self.mechanism_manager.create_port_postcommit(mech_context)
+        except ml2_exc.MechanismDriverError:
+            with excutils.save_and_reraise_exception():
+                LOG.error(_("mechanism_manager.create_port_postcommit "
+                            "failed, deleting port '%s'"), result['id'])
+                self.delete_port(context, result['id'])
+        self.notify_security_groups_member_updated(context, result)
+        return result
 
     def update_port(self, context, id, port):
+        do_commit = False
 
-        port = port.get("port", {})
-        old_port = self.get_port(context, id)
+        attrs = port['port']
+        need_port_update_notify = False
 
-        # Don't allow updating hardware_id for a port
-        old_hw_id = self._get_hardware_id_from_port(old_port)
-        new_hw_id = self._get_hardware_id_from_port(port)
-        if new_hw_id:
-            if (old_hw_id is not None) and (new_hw_id != old_hw_id):
-                msg = ("Updating switch:hardware_id not supported")
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
-            else:
-                db.update_port_hardware_id(id, new_hw_id)
+        session = context.session
+        changed_fixed_ips = 'fixed_ips' in port['port']
+        with session.begin(subtransactions=True):
+            try:
+                port_db = (session.query(models_v2.Port).
+                           enable_eagerloads(False).
+                           filter_by(id=id).with_lockmode('update').one())
+            except sa_exc.NoResultFound:
+                raise exc.PortNotFound(port_id=id)
 
-        # Don't allow commit True -> False
-        # Handle changing admin states
-        old_state = self._get_commit_from_port(old_port)
-        new_state = self._get_commit_from_port(port)
+            # Process extension data
+            original_port = self._make_port_dict(port_db)
+            self._find_port_dict_extensions(
+                original_port, None, session=session)
 
-        if old_state and (new_state is False):
-            msg = ("switch:commit True -> False not supported")
-            raise n_exc.BadRequest(
-                resource="port",
-                msg=msg)
+            updated_port = super(plugin.Ml2Plugin, self).update_port(context, id,
+                                                              port)
 
-        # we want to make sure we add/validate any portmaps that happen
-        # to get sent with the update
-        old_port.update(port)
-        new_port = old_port
+            # Process extension data
+            port_ext = self._update_port_ext(updated_port, port, session=session)
+            switchports = self._update_switchports(updated_port, port, session=session)
+            self._find_port_dict_extensions(
+                updated_port, None, port_ext=port_ext,
+                switchports=switchports, session=session)
 
-        network_id = new_port["network_id"]
-        ironic_network = self._get_ironic_network(network_id)
-        ironic_portmaps = self._get_ironic_portmaps(new_port, ironic_network)
+            # We only want to commit on a state change
+            if original_port["commit"] != updated_port["commit"]:
+                do_commit = True
+                # If we are transitioning to active, validate
+                if not original_port["commit"] and updated_port["commit"]:
+                    self._validate_port_can_commit(
+                        updated_port, None, session=session)
 
-        if not ironic_portmaps:
-            ironic_portmaps = self._create_ironic_portmaps(new_port, ironic_network)
+            if addr_pair.ADDRESS_PAIRS in port['port']:
+                need_port_update_notify |= (
+                    self.update_address_pairs_on_port(context, id, port,
+                                                      original_port,
+                                                      updated_port))
+            elif changed_fixed_ips:
+                self._check_fixed_ips_and_address_pairs_no_overlap(
+                    context, updated_port)
+            need_port_update_notify |= self.update_security_group_on_port(
+                context, id, port, original_port, updated_port)
+            network = self.get_network(context, original_port['network_id'])
+            need_port_update_notify |= self._update_extra_dhcp_opts_on_port(
+                context, id, port, updated_port)
+            mech_context = driver_context.PortContext(
+                self, context, updated_port, network,
+                original_port=original_port)
+            need_port_update_notify |= self._process_port_binding(
+                mech_context, attrs)
 
-        # throws
-        self._validate_port(ironic_portmaps, new_port, ironic_network)
+            self.mechanism_manager.update_port_precommit(mech_context)
 
-        # if we are moving from commit == False -> True,
-        # we need to actually push the config to the switch(es)
-        if (old_state is False) and (new_state is True):
+        # TODO(apech) - handle errors raised by update_port, potentially
+        # by re-calling update_port with the previous attributes. For
+        # now the error is propogated to the caller, which is expected to
+        # either undo/retry the operation or delete the resource.
+        if do_commit:
+            self.mechanism_manager.update_port_postcommit(mech_context)
 
-            LOG.info("Port %s setting commit=True" % id)
+        need_port_update_notify |= self.is_security_group_member_updated(
+            context, original_port, updated_port)
 
-            success = self.driver_manager.attach(
-                new_port, ironic_network, ironic_portmaps)
-            if success:
-                db.update_port_commit(new_port["id"], True)
-            else:
-                port_id = new_port["id"]
-                msg = "Failed configuring port: %s" % port_id
-                raise n_exc.BadRequest(
-                    resource="port",
-                    msg=msg)
+        if original_port['admin_state_up'] != updated_port['admin_state_up']:
+            need_port_update_notify = True
 
-        updated_port = super(IronicPlugin, self).update_port(context, id, {"port": port})
-        self._add_port_data(updated_port, ironic_portmaps=ironic_portmaps)
+        if need_port_update_notify:
+            self._notify_port_updated(mech_context)
+
         return updated_port
 
-    def get_port(self, context, id, fields=None):
-        port = super(IronicPlugin, self).get_port(context, id, fields)
-        port = self._add_port_data(port)
-        return port
+    def delete_port(self, context, id, l3_port_check=True):
+        super(IronicMl2Plugin, self).delete_port(
+            context, id, l3_port_check=True)
+        self._delete_port_ext(id)
+
 
     def get_ports(self, context, filters=None, fields=None,
                   sorts=None, limit=None, marker=None,
@@ -398,7 +351,7 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
 
         # We want to allow filtering by the hardware_id extension field.
         if 'switch:hardware_id' in filters and filters['switch:hardware_id']:
-            ports = db.filter_ports(hardware_id=filters['switch:hardware_id'])
+            ports = db.filter_port_ext(hardware_id=filters['switch:hardware_id'])
             port_ids = [p.port_id for p in ports]
 
             # no ports match that hardware_id, so we can bail early
@@ -408,27 +361,55 @@ class IronicPlugin(db_base_plugin_v2.NeutronDbPluginV2,
                 ids = filters.get("id", [])
                 filters["id"] = ids + port_ids
 
-        ports = super(IronicPlugin, self).get_ports(
+        return super(IronicMl2Plugin, self).get_ports(
             context, filters, fields, sorts, limit, marker, page_reverse)
-        return [self._add_port_data(p) for p in ports]
 
-    def _add_port_data(self, neutron_port, ironic_port=None, ironic_portmaps=None):
-        """Update default port info with plugin-specific
-        stuff (switch port mappings, etc).
+
+class IronicMechanismDriver(api.MechanismDriver):
+
+    def initialize(self):
+        self.driver_manager = manager.DriverManager()
+        LOG.info("IronicMechanismDriver initialized.")
+
+    def create_network_postcommit(self, context):
+        # TODO(morgabra) Actually provision vlan
+        pass
+
+    def create_port_postcommit(self, context):
+        network = context.network.current
+        current = context.current
+
+        LOG.info("create_port_postcommit() commit=True for port %s, attaching" % current["id"])
+        self.driver_manager.attach(current, network)
+
+
+    def update_port_postcommit(self, context):
         """
+        TODO(morgabra) Failures here do *not* reset the database state :(
+        TODO(morgabra) Rethink this - it's a bummer that this single function
+        is responsible for figuring out if it should commit or uncommit a config
+        """
+        network = context.network.current
+        original = context.original
+        current = context.current
 
-        if not ironic_port:
-            ironic_port = db.get_port(neutron_port["id"])
+        if original["commit"] and not current["commit"]:
+            LOG.info("update_port_postcommit() commit=True -> commit=False for port %s, detaching" % current["id"])
+            self.driver_manager.detach(current, network)
+        else:
+            LOG.info("update_port_postcommit() commit=False -> commit=True for port %s, attaching" % current["id"])
+            self.driver_manager.attach(current, network)
 
-        hardware_id = ironic_port.hardware_id
+    def delete_port_postcommit(self, context):
+        network = context.network.current
+        current = context.current
 
-        if not ironic_portmaps:
-            ironic_portmaps = db.filter_portmaps(
-                hardware_id=hardware_id)
+        if not current["switch:ports"]:
+            msg = "cannot update port, no switchports found"
+            raise exc.InvalidInput(error_message=msg)
 
-        ironic_portmaps = [p.as_dict() for p in ironic_portmaps]
-        neutron_port.update({"switch:portmaps": ironic_portmaps})
-        ironic_port_dict = ironic_port.as_dict()
-        ironic_port_dict.pop('port_id')
-        neutron_port.update(ironic_port_dict)
-        return neutron_port
+        LOG.info("delete_port_postcommit() for port %s, dettaching" % current["id"])
+        self.driver_manager.detach(current, network)
+
+    def bind_port(self, context):
+        pass
