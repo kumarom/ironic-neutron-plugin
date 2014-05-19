@@ -42,7 +42,7 @@ class CiscoDriver(base_driver.Driver):
             self.dry_run = cfg.CONF.ironic.dry_run
         self.ncclient = None
 
-    def _filter_interface_conf(c):
+    def _filter_interface_conf(self, c):
         """determine if an interface configuration string is relevant."""
         if c.startswith("!"):
           return False
