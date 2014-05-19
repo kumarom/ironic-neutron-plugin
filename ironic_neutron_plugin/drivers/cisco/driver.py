@@ -154,9 +154,11 @@ class CiscoDriver(base_driver.Driver):
 
         def _filter_clear_commands(c):
             for r in IGNORE_CLEAR:
-                return r.match(c)
+                if r.match(c):
+                    return False
+            return True
 
-        cmds = [c for c in cmds if not _filter_clear_commands(c)]
+        cmds = [c for c in cmds if _filter_clear_commands(c)]
 
         self._run_commands(
             port.switch_host,
