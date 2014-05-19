@@ -43,6 +43,9 @@ class CiscoException(base_driver.DriverException):
 
 
 class CiscoDriver(base_driver.Driver):
+    """
+    TODO(morgabra) Close sessions
+    """
 
     def __init__(self, dry_run=None):
         self.dry_run = dry_run
@@ -111,21 +114,22 @@ class CiscoDriver(base_driver.Driver):
         # filter comments and other unrelated data
         return [c.strip() for c in res if self._filter_interface_conf(c)]
 
-    def show(self, port, type="ethernet"):
+    def show(self, port, type="ethernet", session=None):
+        if not session:
+            session = self._connect(port)
+
         LOG.debug("Fetching interface %s" % (port.interface))
 
         eth_int = commands._make_ethernet_interface(port.interface)
         cmds = commands.show_interface_configuration(type, eth_int)
 
         result = self._run_commands(
-            port.switch_host,
-            port.switch_username,
-            port.switch_password,
+            session,
             cmds)
 
         return self._get_result(result)
 
-    def clear(self, port):
+    def clear(self, port, session=None):
         """
         Remove all configuration for a given interface, which includes
         the ethernet interface, related port-channel, and any dhcp snooping
@@ -139,13 +143,16 @@ class CiscoDriver(base_driver.Driver):
 
         TODO(morgabra) port security (delete from the dhcp snooping table, etc)
         """
+        if not session:
+            session = self._connect(port)
+
         LOG.debug("clearing interface %s" % (port.interface))
 
         interface = port.interface
         portchan_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
-        eth_conf = self.show(port, type='ethernet')
+        eth_conf = self.show(port, type='ethernet', session=session)
         eth_conf = [self._negate_conf(c) for c in eth_conf]
 
         cmds = commands._delete_port_channel_interface(portchan_int)
@@ -160,15 +167,15 @@ class CiscoDriver(base_driver.Driver):
 
         cmds = [c for c in cmds if _filter_clear_commands(c)]
 
-        self._run_commands(
-            port.switch_host,
-            port.switch_username,
-            port.switch_password,
+        return self._run_commands(
+            session,
             cmds)
 
-    def create(self, port):
+    def create(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
-        self.clear(port)
+        self.clear(port, session=session)
 
         LOG.debug("Creating port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
@@ -184,19 +191,21 @@ class CiscoDriver(base_driver.Driver):
             trunked=port.trunked)
 
         return self._run_commands(
-            port.switch_host,
-            port.switch_username,
-            port.switch_password,
+            session,
             cmds)
 
-    def delete(self, port):
+    def delete(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
         LOG.debug("Deleting port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
 
-        return self.clear(port)
+        return self.clear(port, session=session)
 
-    def attach(self, port):
+    def attach(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
         LOG.debug("Attaching vlan %s to interface %s"
                   % (port.vlan_id, port.interface))
@@ -209,12 +218,13 @@ class CiscoDriver(base_driver.Driver):
             trunked=port.trunked)
 
         return self._run_commands(
-            port.switch_host,
-            port.switch_username,
-            port.switch_password,
+            session,
             cmds)
 
-    def detach(self, port):
+    def detach(self, port, session=None):
+        if not session:
+            session = self._connect(port)
+
 
         LOG.debug("Detaching vlan %s from interface %s"
                   % (port.vlan_id, port.interface))
@@ -227,9 +237,7 @@ class CiscoDriver(base_driver.Driver):
             trunked=port.trunked)
 
         return self._run_commands(
-            port.switch_host,
-            port.switch_username,
-            port.switch_password,
+            session,
             cmds)
 
     def _import_ncclient(self):
@@ -243,39 +251,39 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
-    def _run_commands(self, host, username, password, commands):
+    def _run_commands(self, session, commands):
 
         if not commands:
             LOG.debug("No commands to run")
             return
 
-        LOG.debug("Switch host:%s executing commands: %s" % (host, commands))
+        LOG.debug("executing commands: %s" % (commands))
 
         if self.dry_run:
             LOG.debug("Dry run is enabled, skipping")
             return None
 
-        conn = None
         try:
-            conn = self._connect(host, username, password)
-            return conn.command(commands)
+            return session.command(commands)
         except Exception as e:
             raise CiscoException(e)
-        finally:
-            try:
-                if conn:
-                    conn.close_session()
-            except Exception as e:
-                raise CiscoException(e)
 
-    def _connect(self, host, username, password, port=22):
+    def _connect(self, port):
         if not self.ncclient:
             self.ncclient = self._import_ncclient()
 
         try:
-            return self.ncclient.connect(host=host,
-                                         port=port,
-                                         username=username,
-                                         password=password)
+            LOG.debug("starting session: %s" % (port.switch_host))
+
+            return self.ncclient.connect(host=port.switch_host,
+                                         port=22, # FIXME(morgabra) configurable
+                                         username=port.switch_username,
+                                         password=port.switch_password)
+        except Exception as e:
+            raise CiscoException(e)
+
+    def _close(self, session):
+        try:
+            session.close_session()
         except Exception as e:
             raise CiscoException(e)
