@@ -30,6 +30,11 @@ LOG = logging.getLogger(__name__)
 print __name__
 
 
+# TODO(morgabra) fix this
+IGNORE_CLEAR = [
+"no spanning-tree bpduguard enable"
+]
+
 class CiscoException(base_driver.DriverException):
     pass
 
@@ -143,6 +148,12 @@ class CiscoDriver(base_driver.Driver):
         cmds = commands._configure_interface('ethernet', eth_int)
         cmds = cmds + eth_conf + ['shutdown']
         cmds = cmds + commands._delete_port_channel_interface(portchan_int)
+
+        # TODO(morgabra) Remove this when it works
+        for cmd in IGNORE_CLEAR:
+            if cmd in cmds:
+                i = cmds.index(cmd)
+                cmds.pop(i)
 
         self._run_commands(
             port.switch_host,
