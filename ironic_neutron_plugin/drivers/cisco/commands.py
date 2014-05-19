@@ -117,7 +117,7 @@ def _unbind_ip(ip, mac_address, vlan_id, interface):
 
 def _delete_port_channel_interface(interface):
     return (
-        _configure() +
+        _configure_interface("port-channel", interface) +
         ['no interface port-channel %s' % (interface)]
     )
 
