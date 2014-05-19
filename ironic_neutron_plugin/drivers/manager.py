@@ -91,7 +91,7 @@ class DriverManager(object):
 
     def _make_port_info(self, neutron_port, neutron_network, switch_port):
         return base_driver.PortInfo(
-            switch_ip=switch_port.switch.host,
+            switch_host=switch_port.switch.host,
             switch_username=switch_port.switch.username,
             switch_password=switch_port.switch.password,
             hardware_id=neutron_port["switch:hardware_id"],

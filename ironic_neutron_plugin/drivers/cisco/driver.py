@@ -27,6 +27,7 @@ from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
 
 LOG = logging.getLogger(__name__)
+print __name__
 
 
 class CiscoException(base_driver.DriverException):
@@ -35,9 +36,119 @@ class CiscoException(base_driver.DriverException):
 
 class CiscoDriver(base_driver.Driver):
 
-    def __init__(self):
-        self.dry_run = cfg.CONF.ironic.dry_run
+    def __init__(self, dry_run=None):
+        self.dry_run = dry_run
+        if dry_run == None:
+            self.dry_run = cfg.CONF.ironic.dry_run
         self.ncclient = None
+
+    def _filter_interface_conf(c):
+        """determine if an interface configuration string is relevant."""
+        if c.startswith("!"):
+          return False
+
+        if c.startswith("version "):
+          return False
+
+        if c.startswith("interface"):
+          return False
+
+        if not c:
+          return False
+
+        return True
+
+    def _negate_conf(self, c):
+        """negate a line of configuration"""
+        return "no %s" % c
+
+    def _get_result(self, res):
+        """Get text reponse from an ncclient command.
+
+        Example XML from ncclient:
+
+        <?xml version="1.0" encoding="ISO-8859-1"?>
+        <rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
+                   xmlns:if="http://www.cisco.com/nxos:1.0:if_manager"
+                   xmlns:nxos="http://www.cisco.com/nxos:1.0"
+                   message-id="urn:uuid:4a9be8b4-df85-11e3-ab20-becafe000bed">
+          <data>
+            !Command: show running-config interface Ethernet1/20
+            !Time: Mon May 19 18:40:08 2014
+
+            version 6.0(2)U2(4)
+
+            interface Ethernet1/20
+              shutdown
+              spanning-tree port type edge
+              spanning-tree bpduguard enable
+
+          </data>
+        </rpc-reply>
+
+        Example return value:
+        ['shutdown', 'spanning-tree port type edge', 'spanning-tree bpduguard enable']
+        """
+        if not res:
+            return []
+
+        # get the first child from the xml response
+        res = res._root.getchildren()
+        if len(res) != 1:
+            raise Exception("cannot parse command response")
+
+        # split the raw text by newline
+        res = res[0].text.split("\n")
+
+        # filter comments and other unrelated data
+        return [c.strip() for c in res if self._filter_interface_conf(c)]
+
+    def show(self, port, type="ethernet"):
+        LOG.debug("Fetching interface %s" % (port.interface))
+
+        eth_int = commands._make_ethernet_interface(port.interface)
+        cmds = commands.show_interface_configuration(type, eth_int)
+
+        result = self._run_commands(
+            port.switch_host,
+            port.switch_username,
+            port.switch_password,
+            cmds)
+
+        return self._get_result(result)
+
+    def clear(self, port):
+        """
+        Remove all configuration for a given interface, which includes
+        the ethernet interface, related port-channel, and any dhcp snooping
+        bindings or other port security features.
+
+        For some reason, you can't run 'no interface eth x/x' on
+        the 3172. So we have to read the config for the interface first
+        and manually negate each option.
+
+        'no interface port-channel' works as expected.
+
+        TODO(morgabra) port security (delete from the dhcp snooping table, etc)
+        """
+        LOG.debug("clearing interface %s" % (port.interface))
+
+        interface = port.interface
+        portchan_int = commands._make_portchannel_interface(interface)
+        eth_int = commands._make_ethernet_interface(interface)
+
+        eth_conf = self.show(port, type='ethernet')
+        eth_conf = [self._negate_conf(c) for c in eth_conf]
+
+        cmds = commands._configure_interface('ethernet', eth_int)
+        cmds = cmds + eth_conf + ['shutdown']
+        cmds = cmds + commands._delete_port_channel_interface(portchan_int)
+
+        self._run_commands(
+            port.switch_host,
+            port.switch_username,
+            port.switch_password,
+            cmds)
 
     def create(self, port):
 
@@ -54,8 +165,8 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        self._run_commands(
-            port.switch_ip,
+        return self._run_commands(
+            port.switch_host,
             port.switch_username,
             port.switch_password,
             cmds)
@@ -71,8 +182,8 @@ class CiscoDriver(base_driver.Driver):
             trunked=port.trunked)
 
         self.detach(port)
-        self._run_commands(
-            port.switch_ip,
+        return self._run_commands(
+            port.switch_host,
             port.switch_username,
             port.switch_password,
             cmds)
@@ -89,8 +200,8 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        self._run_commands(
-            port.switch_ip,
+        return self._run_commands(
+            port.switch_host,
             port.switch_username,
             port.switch_password,
             cmds)
@@ -107,8 +218,8 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        self._run_commands(
-            port.switch_ip,
+        return self._run_commands(
+            port.switch_host,
             port.switch_username,
             port.switch_password,
             cmds)
@@ -124,30 +235,37 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
-    def _run_commands(self, ip, username, password, commands):
+    def _run_commands(self, host, username, password, commands):
 
         if not commands:
             LOG.debug("No commands to run")
             return
 
-        LOG.info("Switch ip:%s executing commands: %s" % (ip, commands))
+        LOG.debug("Switch host:%s executing commands: %s" % (host, commands))
 
         if self.dry_run:
             LOG.debug("Dry run is enabled, skipping")
-            return
+            return None
 
-        conn = self._connect(ip, username, password)
+        conn = None
         try:
-            conn.command(commands)
+            conn = self._connect(host, username, password)
+            return conn.command(commands)
         except Exception as e:
             raise CiscoException(e)
+        finally:
+            try:
+                if conn:
+                    conn.close_session()
+            except Exception as e:
+                raise CiscoException(e)
 
-    def _connect(self, ip, username, password, port=22):
+    def _connect(self, host, username, password, port=22):
         if not self.ncclient:
             self.ncclient = self._import_ncclient()
 
         try:
-            return self.ncclient.connect(host=ip,
+            return self.ncclient.connect(host=host,
                                          port=port,
                                          username=username,
                                          password=password)

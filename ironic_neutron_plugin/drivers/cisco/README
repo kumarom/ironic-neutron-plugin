@@ -1,174 +1,196 @@
-# Copyright 2013 OpenStack Foundation
-# All rights reserved.
-#
-#    Licensed under the Apache License, Version 2.0 (the "License"); you may
-#    not use this file except in compliance with the License. You may obtain
-#    a copy of the License at
-#
-#         http://www.apache.org/licenses/LICENSE-2.0
-#
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-#    License for the specific language governing permissions and limitations
-#    under the License.
+NX-OS Crash Course
+==================
 
-The current driver implementation depends on the bundled 'ncconf' package, a netconf python lib. This package is modified to support the <exec-command> element and we use direct commands as opposed to the XML-based config management provided by vanilla netconf.
+show running interface ethernet 1/40
 
-This might be a bad idea, but it's much easier to manage.
+show running interface port-channel 40
 
-For future reference, listed below are some XML configuration snippets should we ever want to use the XML api.
+show ip dhcp snooping binding
 
-# TODO(morgabra) Need to get ahold of relevant documentation (XML schema, mostly) - it's behind an auth wall for cisco
-BASE_XML_CONFIG = """
-          <interface>
-            <port-channel>
-              <interface>%s</interface>
-              <__XML__MODE_if-ethernet-switch>
-                 <description>
-                   <desc_line>%s</desc_line>
-                </description>
-                <switchport>
-                  <mode>
-                    <trunk/>
-                  </mode>
-                </switchport>
-                <switchport>
-                  <trunk>
-                    <allowed>
-                      <vlan>
-                        <vlan_id>%s</vlan_id>
-                      </vlan>
-                    </allowed>
-                  </trunk>
-                </switchport>
-                <spanning-tree>
-                  <port>
-                    <type>
-                      <edge>
-                        <trunk>
-                        </trunk>
-                      </edge>
-                    </type>
-                  </port>
-                </spanning-tree>
-                <vpc>
-                  <vpc_id>%s</vpc_id>
-                </vpc>
-                <no>
-                  <shutdown/>
-                </no>
-              </__XML__MODE_if-ethernet-switch>
-            </port-channel>
-          </interface>
-          <interface>
-            <ethernet>
-              <interface>1/%s</interface>
-              <__XML__MODE_if-ethernet-switch>
-                 <description>
-                   <desc_line>%s</desc_line>
-                </description>
-                <switchport>
-                  <mode>
-                    <trunk/>
-                  </mode>
-                </switchport>
-                <switchport>
-                  <trunk>
-                    <allowed>
-                      <vlan>
-                        <vlan_id>%s</vlan_id>
-                      </vlan>
-                    </allowed>
-                  </trunk>
-                </switchport>
-                <spanning-tree>
-                  <port>
-                    <type>
-                      <edge>
-                        <trunk>
-                        </trunk>
-                      </edge>
-                    </type>
-                  </port>
-                </spanning-tree>
-                <no>
-                  <shutdown/>
-                </no>
-                <channel-group>
-                  <number>%s</number>  # TODO(morgabra) Figure out the correct tag
-                  <mode>
-                    <active/>
-                  </mode>
-                </channel-group>
-              </__XML__MODE_if-ethernet-switch>
-            </ethernet>
-          </interface>
-"""
+Config Reference
+================
 
-# The following are standard strings, messages used to communicate with Nexus.
-EXEC_CONF_SNIPPET = """
-      <config xmlns:xc="urn:ietf:params:xml:ns:netconf:base:1.0">
-        <configure>
-          <__XML__MODE__exec_configure>%s
-          </__XML__MODE__exec_configure>
-        </configure>
-      </config>
-"""
+```
+Config Templates:
+Notes:
+TOR1 and TOR2 are A and B side switches.
+VPC port-channel is a multi-chassis etherchannel spanning across 2 switches to one host by the switches utilizing the same bundle-ID.
 
-CMD_INT_VLAN_HEADER = """
-          <interface>
-            <ethernet>
-              <interface>%s</interface>
-              <__XML__MODE_if-ethernet-switch>
-                <switchport>
-                  <trunk>
-                    <allowed>
-                      <vlan>"""
+<pub_ip> - Public IP address
+<pub_mask> - Pulic Subnet Mask
+<pub_mac> - Public Bond MAC interface
 
-CMD_VLAN_ID = """
-                          <vlan_id>%s</vlan_id>"""
+<snet_ip> - ServiceNet IP address
+<snet_mask> - ServiceNet Subnet Mask
+<snet_mac> - ServicNet Bond MAC Address
 
-CMD_VLAN_ADD_ID = """
-                        <add>%s
-                        </add>""" % CMD_VLAN_ID
+<pub_vlan> - Public VLAN Number
+<snet_vlan> - Servicenet VLAN number
+<prov_vlan> - Provisioning VLAN number
 
-CMD_INT_VLAN_TRAILER = """
-                      </vlan>
-                    </allowed>
-                  </trunk>
-                </switchport>
-              </__XML__MODE_if-ethernet-switch>
-            </ethernet>
-          </interface>
-"""
+<svr_int1>  - First Server Interface
+<svr_int2>  - Second Server Interface
 
-CMD_INT_VLAN_SNIPPET = (CMD_INT_VLAN_HEADER +
-                        CMD_VLAN_ID +
-                        CMD_INT_VLAN_TRAILER)
+<sw_int> - Switch Interface (doubles as port-channel/VPC identifiers)
 
-CMD_INT_VLAN_ADD_SNIPPET = (CMD_INT_VLAN_HEADER +
-                            CMD_VLAN_ADD_ID +
-                            CMD_INT_VLAN_TRAILER)
 
-CMD_INT_REMOVE_VLAN = """
-          <interface>
-            <ethernet>
-              <interface>%s</interface>
-              <__XML__MODE_if-ethernet-switch>
-                <switchport></switchport>
-                <switchport>
-                  <trunk>
-                    <allowed>
-                      <vlan>
-                        <remove>
-                          <vlan>%s</vlan>
-                        </remove>
-                      </vlan>
-                    </allowed>
-                  </trunk>
-                </switchport>
-              </__XML__MODE_if-ethernet-switch>
-            </ethernet>
-          </interface>
-"""
+----------------------------------------------------------
+
+Production - Trunk allowing <pub_vlan>/<snet_vlan> on LACP VPC port-channel.
+
+TOR1/TOR2:
+
+interface port-channel<sw_int>
+  description CUST<y>-host
+  switchport mode trunk
+  switchport trunk allowed vlan <pub_vlan>,<snet_vlan>
+  spanning-tree port type edge trunk
+  vpc <sw_int>
+  no shutdown
+
+interface Ethernet1/<sw_int>
+  description CUST<Y>-host
+  switchport mode trunk
+  switchport trunk allowed vlan <pub_vlan>,<snet_vlan>
+  spanning-tree port type edge trunk
+  channel-group <sw_int> mode active
+  no shutdown
+
+
+----------------------------------------------------------
+
+Pre/Post Prod - Access port <prov_vlan> on TOR1 only. TOR2 interface shutdown.
+
+TOR1:
+ interface Ethernet1/<sw_int>
+ description CUST<Y>-host
+ switchport mode access
+ switchport access vlan <prov_vlan>
+ spannning-tree port type edge
+ no shutdown
+
+TOR2:
+ interface Ethernet1/<sw_int>
+ shutdown
+
+----------------------------------------------------------
+
+IP Binding Config(global configuration):
+
+ip source binding <pub_ip> <pub_mac> vlan <pub_vlan> interface port-channel<sw_int>
+ip source binding <snet_ip> <snet_mac> vlan <snet_vlan> interface port-channel<sw_int>
+
+
+----------------------------------------------------------
+Host Configuration:
+
+auto <svr_int1>
+iface <svr_int1> inet manual
+bond-master bond0
+
+auto <svr_int2>
+iface <svr_int2> inet manual
+bond-master bond0
+
+auto bond0
+iface bond0 inet manual
+bond-mode 4
+bond-miimon 100
+bond-lacp-rate 1
+bond-slaves <svr_int1> <svr_int2>
+
+auto bond0.<pub_vlan>
+iface bond0.<pub_vlan> inet static
+vlan_raw_device bond0
+address <pub_ip>
+netmask <pub_mask>
+hwaddress ether <pub_mac>
+
+auto bond0.<snet_vlan>
+iface bond0.<snet_vlan> inet static
+vlan_raw_device bond0
+address <snet_ip>
+netmask <snet_mask>
+hwaddress ether <snet_mac>
+
+----------------------------------------------------------
+----------------------------------------------------------
+
+Example Configuration:
+In this configuration the host is on port ethernet1/5 of the TORs.
+
+<pub_ip> - 192.168.1.1
+<pub_mask> - 255.255.255.0
+<pub_mac> - 90:e2:ba:56:64:54
+
+<snet_ip> - 10.127.1.1
+<snet_mask> - 255.255.255.0
+<snet_mac> - 90:e2:ba:56:64:55
+
+<pub_vlan> - 201
+<snet_vlan> - 301
+
+<svr_int1>  - eth0
+<svr_int2>  - eth1
+
+<sw_int> - 5
+
+----------------------------------------------------------
+Switch:
+ip source binding 192.168.1.1 90:e2:ba:56:64:54 vlan 201 interface port-channel5
+ip source binding 10.127.1.1 90:e2:ba:56:64:55 vlan 301 interface port-channel5
+
+TOR1/TOR2:
+
+interface port-channel5
+  description CUST-host
+  switchport mode trunk
+  switchport trunk allowed vlan 201,301
+  spanning-tree port type edge trunk
+  vpc 5
+  no shutdown
+
+interface Ethernet1/5
+  description CUST<Y>-host
+  switchport mode trunk
+  switchport trunk allowed vlan 201,301
+  spanning-tree port type edge trunk
+  channel-group 5 mode active
+  no shutdown
+
+
+
+----------------------------------------------------------
+Host:
+
+auto eth0
+iface eth0 inet manual
+bond-master bond0
+
+auto eth1
+iface eth1 inet manual
+bond-master bond0
+
+auto bond0
+iface bond0 inet manual
+bond-mode 4
+bond-miimon 100
+bond-lacp-rate 1
+bond-slaves eth0 eth1
+
+auto bond0.201
+iface bond0.201 inet static
+vlan_raw_device bond0
+address 192.168.1.1
+netmask 255.255.255.0
+hwaddress ether 90:e2:ba:56:64:54
+
+auto bond0.301
+iface bond0.301 inet static
+vlan_raw_device bond0
+address 10.127.1.1
+netmask 255.255.255.0
+hwaddress ether 90:e2:ba:56:64:55
+
+----------------------------------------------------------
+```

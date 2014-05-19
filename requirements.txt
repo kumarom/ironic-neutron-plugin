@@ -1,12 +1,12 @@
-pbr>=0.6
+
 
 # latest neutronclient
 -e git+https://github.com/openstack/python-neutronclient.git@0ef9b8e1bdfab92514913643f7afe6c0a49f2e24#egg=python-neutronclient
 
-# ncclient dependencies (see ironic_neutron_plugin/extern)
--e git+https://github.com/morgabra/ncclient.git@5857500c564ccff9a43a777a4b41088b8dedd053#egg=ncclient
-paramiko>=1.7.4
-
 # neutron + dependencies
 mysql-python>=1.2.5
 -e git+https://github.com/openstack/neutron.git@fab50bd4b3cc480b7a8fa7f6c33c3ef2e19b3438#egg=neutron
+
+# ncclient dependencies (see ironic_neutron_plugin/extern)
+paramiko>=1.7.4
+-e git+https://github.com/morgabra/ncclient.git@5857500c564ccff9a43a777a4b41088b8dedd053#egg=ncclient

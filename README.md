@@ -18,24 +18,25 @@ curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"
 ironic-neutron-plugin
 =====================
 
-This is a (likely) extremely misguided attempt at a proof of concept neutron plugin that is suitable
-for managing an ironic deployment.
+This is a (likely) extremely misguided attempt at a proof of concept neutron plugin that works with ironic
+(or really any bare-metal environment).
 
-This driver currently only handles configuring the ToR(s) to allow a device on a few pre-defined VLANs.
+Added features/extensions:
 
-This requires a few neutron api extensions:
+1. physical switch/credential management
+2. a mapping of a new attribute "hardware_id" to physical switch(es)/port(s)
+4. "trunked" flag on port objects, which is passed through to the mechanism to determine how to configure the ToR
+3. "commit" flag on port objects - allowing you to push/remove ToR configurations separately from the neutron port object
 
-1. switch/credential management
-2. a mapping of device_id to physical switch(es)/port(s).
+In short, instead of agents plugging virtual ports, we keep a map of physical switchports to an abstract "hardware_id" and call a second driver layer that configures the switchport and adds/removes relevant vlans.
 
-This is very much not usable long-term, as it's probably a bad idea and/or we'll have to integrate this
-into a real plugin.
 
-Notes/Open Questions
-====================
+Notes/Open Questions/TODO
+=========================
 
-1. An ml2 driver seems like it exposes enough functionality for us if we are only playing with ToRs. The major issue is there doesn't seem to be a clean way to hook into loading custom extensions, but this might be a bad idea anyway to maintain a portmap in neutron.
-2. It's a bummer to have to implement yet another driver abstraction layer to actually talk to the hardware. You might be able to pick some parts out of other plugins that are relevant?
+1. We have to subclass the Ml2 plugin because there is no way to load extensions. (Even if there was, the request body isn't passed to the mechanism and the returned objects do not include extension fields.)
+2. If the above were fixed, we could push the switchport mapping and other extension logic into the mechanism, which would make this much easier to maintain.
+3. Alternatively, the features we need could be merged upstream in some capacity.
 
 Development
 ===========
@@ -46,16 +47,27 @@ Create a Virtualenv
 0. ```tox -e devenv```
 1. ```. devenv/bin/activate```
 
-*NOTE* This can take a while - lots of dependencies.
-
 Create neutron.conf
------------------
+-------------------
 
 0. ```cp ./etc/neutron.conf.dist ./etc/neutron.conf```
-1. ```state_path``` - writable temp dir
-2. ```api_extensions_path``` - absolute path to ironic-neutron-pluin/extensions
-3. ```[database]``` - writeable mysql db - sqlite:// probably works?
-4. ```core_plugin``` - plugin module
+
+Edit neutron.conf
+-----------------
+
+At a minium, you'll need to change the following:
+
+```
+[DEFAULT]
+api_extensions_path = <absolute path to the extensions dir - ex: /path/to/ironic-neutron-plugin/ironic_neutron_plugin/extensions>
+log_dir = <absolute path to your log directory - ex: /path/to/ironic-neutron-plugin/logs>
+
+[database]
+connection = <mysql connection - ex: mysql://neutron_user:password@127.0.0.1:3306/neutron>
+
+[ml2_type_vlan]
+network_vlan_ranges = <comma-separated provider-network names (ex: net1,net2)>
+```
 
 Change Switch Credendial Encryption Key
 ---------------------------------------
@@ -82,7 +94,8 @@ Run Neutron Server
 ------------------
 ```
 # see scripts/neutron-server.sh for an example
-neutron-server --config-file /path/to/plugin/etc/neutron.conf
+export PYTHONPATH=$PYTHONPATH:/path/to/ironic-neutron-plugin
+neutron-server --config-file /path/to/ironic-neutron-plugin/etc/neutron.conf
 ```
 
 API
@@ -102,12 +115,14 @@ To facilitate this, we had to add some extra objects: Switches and PortMaps.
 Switch (Extenstion Object)
 --------------------------
 
-Represents a single physical switch, including management credentials. Has a relationship with 'PortMap', which maps an abstract 'device_id' to a port on the switch.
+Represents a single physical switch, including management credentials. Has a relationship with 'SwitchPort', which maps an abstract 'hardware_id' to a port on the switch.
+
+'type' will determine which driver is used to configure the switch, currently only 'cisco' is implemented (and only halfway tested with a 3172)
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/switches -H 'Content-Type: application/json' -d '{"switch": {"ip": "10.127.75.135", "username": "user", "password": "pass", "type": "cisco"}}'```
+```curl -XPOST localhost:9696/v2.0/switches -H 'Content-Type: application/json' -d '{"switch": {"id": "<some_unique_id>", "host": "10.0.0.1", "username": "user", "password": "pass", "type": "cisco"}}'```
 
-```curl -XPOST localhost:9696/v2.0/switches -H 'Content-Type: application/json' -d '{"switch": {"ip": "10.127.75.136", "username": "user", "password": "pass", "type": "cisco"}}'```
+```curl -XPOST localhost:9696/v2.0/switches -H 'Content-Type: application/json' -d '{"switch": {"id": "<some_unique_id>", "host": "10.0.0.2", "username": "user", "password": "pass", "type": "cisco"}}'```
 
 #### Read
 ```curl localhost:9696/v2.0/switches```
@@ -117,37 +132,38 @@ Represents a single physical switch, including management credentials. Has a rel
 #### Delete (Not Implemented)
 ```curl -XDELETE localhost:9696/v2.0/switches/<switch_id>```
 
-PortMap (Extension Object)
+SwitchPorts (Extension Object)
 --------------------------
 
-Represents a mapping of abstract 'device_id' to a physical switch port.
+Represents a mapping of abstract 'hardware_id' to a physical switch port.
+
+'hardware_id' is anything that uniquely itentifies a set of physical network interfaces. Note that the *instance* id is used in the device_id field by nova, which doesn't help us when we want to maintain a persistent mapping of devices.
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"switch_id": "<switch_id>", "hardware_id": "device", "port": "40", "primary": true}}'```
-
-```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"portmap": {"system_name": "<switch_id>", "hardware_id": "device", "port_id": "40", "chassis_id": "chassis", "port_description": "port description", "primary": false}}'```
+```curl -XPOST localhost:9696/v2.0/portmaps -H 'Content-Type: application/json' -d '{"switchports": [{"switch_id": "<switch_id>", "hardware_id": "device", "port": "Eth1/1", "name": eth0}, {"switch_id": "<switch_id>", "hardware_id": "device", "port": "Eth1/1", "name": eth1}}'```
 
 #### Read
-```curl localhost:9696/v2.0/portmaps```
+```curl localhost:9696/v2.0/switchports```
 
-```curl localhost:9696/v2.0/portmaps/<portmap_id>```
+```curl localhost:9696/v2.0/switchports/<hardware_id>```
 
-```curl localhost:9696/v2.0/portmaps?device_id=<device_id>```
+```curl localhost:9696/v2.0/switchports?hardware_id=<hardware_id>```
 
 #### Delete
-```curl -XDELETE localhost:9696/v2.0/portmaps/<portmap_id>```
+```curl -XDELETE localhost:9696/v2.0/switchports/<hardware_id>```
 
 Network (Neutron Object)
 ------------------------
 
-Default neutron network object, we additionally make use of the provider network extension.
+Default neutron network object.
+
+The value of 'provider:physical_network' must be listed in the 'network_vlan_ranges' option in the config file.
+If you are trying tenant networks, make sure you set vlan ranges in the 'network_vlan_ranges' option in the config file.
 
 #### Create
-```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "PUBLIC-Cust", "provider:physical_network": "PUBLIC-Cust", "provider:network_type": "vlan", "provider:segmentation_id": 301, "tenant_id": "mytenant", "switch:trunked": true}}'```
+```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "PUBLIC-Cust", "provider:physical_network": "public", "provider:network_type": "vlan", "provider:segmentation_id": 301, "tenant_id": "mytenant"}}'```
 
-```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "SNET-Cust", "provider:physical_network": "SNET-Cust", "provider:network_type": "vlan", "provider:segmentation_id": 201, "tenant_id": "mytenant", "switch:trunked": true}}'```
-
-```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "DECOM", "provider:physical_network": "DECOM", "provider:network_type": "vlan", "provider:segmentation_id": 50, "tenant_id": "mytenant", "switch:trunked": false}}'```
+```curl -XPOST localhost:9696/v2.0/networks -H 'Content-Type: application/json' -d '{"network": {"name": "SNET-Cust", "provider:physical_network": "private", "provider:network_type": "vlan", "provider:segmentation_id": 201, "tenant_id": "mytenant"}}'```
 
 #### Read
 ```curl localhost:9696/v2.0/networks```
@@ -160,9 +176,7 @@ Default neutron subnet object.
 #### Create
 ```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<PUBLIC_network_id>", "ip_version": 4, "cidr": "10.127.104.0/25", "tenant_id": "mytenant"}}'```
 
-```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<SNET_network_id>", "ip_version": 4, "cidr": "10.128.0.0/25", "tenant_id": "mytenant"}}'```
-
-```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<DECOM_network_id>", "ip_version": 4, "cidr": "10.129.0.0/25", "tenant_id": "mytenant"}}'```
+```curl -XPOST localhost:9696/v2.0/subnets -H 'Content-Type: application/json' -d '{"subnet": {"network_id": "<PRIVATE_network_id>", "ip_version": 4, "cidr": "10.128.0.0/25", "tenant_id": "mytenant"}}'```
 
 ### Read
 ```curl localhost:9696/v2.0/subnets```
@@ -170,235 +184,63 @@ Default neutron subnet object.
 Port (Neutron Object)
 ---------------------
 
-Default neutron port object. We require device_id be set so we can find which switchports to configure via the PortMap object. Switchport information is returned in the default response.
-
-You can specify portmaps directly in the create request, or ahead of time via the portmap extension, or with an update request as long as the port admin_state_up == False.
-
-'admin_state_up' == True will validate portmaps and push the switch configuration immediately. You can specify False to *not* configure the switch and do it later with an update.
+Mostly default neutron port object, which some extra extensions:
 
 #### Create
 
-```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": true, "trunked": true, "network_id": "<network_id>", "tenant_id": "mytenant", "switch:hardware_id": "device", "switch:portmaps": [{"switch_id": "<switch_id>", "port": 40, "primary": True}, {"switch_id": "<switch_id", "port": 40, "primary": False}]}}'```
+By default, both 'commit' and 'trunked' are false. You may create a port at any time without any extra extension information at all and the model will be created, however no configuration of the ToR will occur.
 
-```curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"switch:commit": false, "network_id": "147907dd-3a6b-40d9-87d8-6a79e9541c98", "tenant_id": "mytenant", "switch:hardware_id": "device0"}}'```
+Before you can 'commit' the configuration to the switch(es), you must provide a hardware_id to the port that has suitable portmappings.
+
+As a convenience, you can include switchports in the create_port request, which will either create or update the port mappings for the given hardware_id.
+
+You will also want to ensure that 'trunked' is set properly. Ultimately it's up to the mechanism to decide what to do with it, but in the case of the existing 'cisco' mech, the port(s) will be configured differently (either 'trunked' or 'access') based on the value of this flag.
+
+## Creating and Committing
+
+The following will create a port and commit the configuration immediately as all the required elements are available and commit=true.
 
 ```
-curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": tb220432fad", "tenant_id": "mytenant", "switch:hardware_id": "device0", "switch:ports": [{"switch_id": "switch1", "port": 40}, {"switch_id": "switch2", "port": 40}]}}'
+curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": true, "trunked": true, "network_id": "<network_uuid>", "tenant_id": "mytenant", "switch:hardware_id": "device21", "switch:ports": [{"switch_id": "switch1", "name": "eth0", "port": "Eth1/21"}, {"switch_id": "switch2", "name": "eth1", "port": "Eth1/21"}]}}'
 ```
+
+The following will create the port object but not push the configuration.
+
+```
+curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": false, "trunked": true, "network_id": "<network_uuid>", "tenant_id": "mytenant", "switch:hardware_id": "device21", "switch:ports": [{"switch_id": "switch1", "name": "eth0", "port": "Eth1/21"}, {"switch_id": "switch2", "name": "eth1", "port": "Eth1/21"}]}}'
+```
+
+You might then, at a later time, commit the configuration.
+```
+curl -XPUT localhost:9696/v2.0/ports/<port_uuid> -H 'Content-Type: application/json' -d '{"port": {"commit": true}}'
+```
+
+You can specify very little information at port-create time.
+```
+curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"network_id": "<network_uuid>", "tenant_id": "mytenant"}}'
+```
+
+And add it and push the config later with an update.
+```
+curl -XPUT localhost:9696/v2.0/ports/<port_uuid> -H 'Content-Type: application/json' -d '{"port": {"commit": true, "trunked": false, "switch:hardware_id": "device21", "switch:ports": [{"switch_id": "switch1", "name": "eth0", "port": "Eth1/21"}, {"switch_id": "switch2", "name": "eth1", "port": "Eth1/21"}]}}'
+```
+
+Caveats:
+1. Portmaps may not be updated if they are in use with an active configuration.
+2. You may have multiple ports with conflicting configuration options (trunked true and false, for example) but you may not commit both at the same time. fcfs
 
 #### Read
 
 ```curl localhost:9696/v2.0/ports```
 
-```curl localhost:9696/v2.0/ports?device_id=<device_id>```
+```curl localhost:9696/v2.0/ports?hardware_id=<hardware_id>```
 
 #### Update
 
-```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"name": "myport", "admin_state_up": true}}'```
-
-```curl -XPUT localhost:9696/v2.0/ports/<port_id> -H 'Content-Type: application/json' -d '{"port": {"switch:portmaps": [{"system_name": "switch1", "port_id": "Eth1/40", "primary": True}, {"system_name": "switch2", "port_id": "Eth1/40", "primary": False}]}}'```
+```
+curl -XPUT localhost:9696/v2.0/ports/<port_uuid> -H 'Content-Type: application/json' -d '{"port": {"commit": true}}'
+```
 
 #### Delete
 
 ```curl -XDELETE localhost:9696/v2.0/ports/<port_id>```
-
-NX-OS Crash Course
-==================
-
-show running interface ethernet 1/40
-
-show running interface port-channel 40
-
-show ip dhcp snooping binding
-
-Config Reference
-================
-
-```
-Config Templates:
-Notes:
-TOR1 and TOR2 are A and B side switches.
-VPC port-channel is a multi-chassis etherchannel spanning across 2 switches to one host by the switches utilizing the same bundle-ID.
-
-<pub_ip> - Public IP address
-<pub_mask> - Pulic Subnet Mask
-<pub_mac> - Public Bond MAC interface
-
-<snet_ip> - ServiceNet IP address
-<snet_mask> - ServiceNet Subnet Mask
-<snet_mac> - ServicNet Bond MAC Address
-
-<pub_vlan> - Public VLAN Number
-<snet_vlan> - Servicenet VLAN number
-<prov_vlan> - Provisioning VLAN number
-
-<svr_int1>  - First Server Interface
-<svr_int2>  - Second Server Interface
-
-<sw_int> - Switch Interface (doubles as port-channel/VPC identifiers)
-
-
-----------------------------------------------------------
-
-Production - Trunk allowing <pub_vlan>/<snet_vlan> on LACP VPC port-channel.
-
-TOR1/TOR2:
-
-interface port-channel<sw_int>
-  description CUST<y>-host
-  switchport mode trunk
-  switchport trunk allowed vlan <pub_vlan>,<snet_vlan>
-  spanning-tree port type edge trunk
-  vpc <sw_int>
-  no shutdown
-
-interface Ethernet1/<sw_int>
-  description CUST<Y>-host
-  switchport mode trunk
-  switchport trunk allowed vlan <pub_vlan>,<snet_vlan>
-  spanning-tree port type edge trunk
-  channel-group <sw_int> mode active
-  no shutdown
-
-
-----------------------------------------------------------
-
-Pre/Post Prod - Access port <prov_vlan> on TOR1 only. TOR2 interface shutdown.
-
-TOR1:
- interface Ethernet1/<sw_int>
- description CUST<Y>-host
- switchport mode access
- switchport access vlan <prov_vlan>
- spannning-tree port type edge
- no shutdown
-
-TOR2:
- interface Ethernet1/<sw_int>
- shutdown
-
-----------------------------------------------------------
-
-IP Binding Config(global configuration):
-
-ip source binding <pub_ip> <pub_mac> vlan <pub_vlan> interface port-channel<sw_int>
-ip source binding <snet_ip> <snet_mac> vlan <snet_vlan> interface port-channel<sw_int>
-
-
-----------------------------------------------------------
-Host Configuration:
-
-auto <svr_int1>
-iface <svr_int1> inet manual
-bond-master bond0
-
-auto <svr_int2>
-iface <svr_int2> inet manual
-bond-master bond0
-
-auto bond0
-iface bond0 inet manual
-bond-mode 4
-bond-miimon 100
-bond-lacp-rate 1
-bond-slaves <svr_int1> <svr_int2>
-
-auto bond0.<pub_vlan>
-iface bond0.<pub_vlan> inet static
-vlan_raw_device bond0
-address <pub_ip>
-netmask <pub_mask>
-hwaddress ether <pub_mac>
-
-auto bond0.<snet_vlan>
-iface bond0.<snet_vlan> inet static
-vlan_raw_device bond0
-address <snet_ip>
-netmask <snet_mask>
-hwaddress ether <snet_mac>
-
-----------------------------------------------------------
-----------------------------------------------------------
-
-Example Configuration:
-In this configuration the host is on port ethernet1/5 of the TORs.
-
-<pub_ip> - 192.168.1.1
-<pub_mask> - 255.255.255.0
-<pub_mac> - 90:e2:ba:56:64:54
-
-<snet_ip> - 10.127.1.1
-<snet_mask> - 255.255.255.0
-<snet_mac> - 90:e2:ba:56:64:55
-
-<pub_vlan> - 201
-<snet_vlan> - 301
-
-<svr_int1>  - eth0
-<svr_int2>  - eth1
-
-<sw_int> - 5
-
-----------------------------------------------------------
-Switch:
-ip source binding 192.168.1.1 90:e2:ba:56:64:54 vlan 201 interface port-channel5
-ip source binding 10.127.1.1 90:e2:ba:56:64:55 vlan 301 interface port-channel5
-
-TOR1/TOR2:
-
-interface port-channel5
-  description CUST-host
-  switchport mode trunk
-  switchport trunk allowed vlan 201,301
-  spanning-tree port type edge trunk
-  vpc 5
-  no shutdown
-
-interface Ethernet1/5
-  description CUST<Y>-host
-  switchport mode trunk
-  switchport trunk allowed vlan 201,301
-  spanning-tree port type edge trunk
-  channel-group 5 mode active
-  no shutdown
-
-
-
-----------------------------------------------------------
-Host:
-
-auto eth0
-iface eth0 inet manual
-bond-master bond0
-
-auto eth1
-iface eth1 inet manual
-bond-master bond0
-
-auto bond0
-iface bond0 inet manual
-bond-mode 4
-bond-miimon 100
-bond-lacp-rate 1
-bond-slaves eth0 eth1
-
-auto bond0.201
-iface bond0.201 inet static
-vlan_raw_device bond0
-address 192.168.1.1
-netmask 255.255.255.0
-hwaddress ether 90:e2:ba:56:64:54
-
-auto bond0.301
-iface bond0.301 inet static
-vlan_raw_device bond0
-address 10.127.1.1
-netmask 255.255.255.0
-hwaddress ether 90:e2:ba:56:64:55
-
-----------------------------------------------------------
-```
-
-
-
-

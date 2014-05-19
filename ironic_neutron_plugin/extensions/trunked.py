@@ -19,7 +19,7 @@ EXTRA_ATTRIBUTES = {
     "ports": {
         "trunked": {"allow_post": True, "allow_put": True,
                     "validate": {"type:boolean": None},
-                    "default": attr.ATTR_NOT_SPECIFIED,
+                    "default": False,
                     "is_visible": True}
     }
 }

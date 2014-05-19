@@ -13,12 +13,11 @@
 # limitations under the License.
 
 from neutron.api import extensions
-from neutron.api.v2 import attributes as attr
 
 EXTRA_ATTRIBUTES = {
     "ports": {
         "commit": {"allow_post": True, "allow_put": True,
-                   "default": attr.ATTR_NOT_SPECIFIED,
+                   "default": False,
                    "validate": {"type:boolean": None},
                    "is_visible": True}
     }
