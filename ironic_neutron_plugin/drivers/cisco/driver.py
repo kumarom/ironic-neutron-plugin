@@ -168,6 +168,8 @@ class CiscoDriver(base_driver.Driver):
 
     def create(self, port):
 
+        self.clear(port)
+
         LOG.debug("Creating port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
         LOG.debug("Attaching vlan %s to interface %s"
@@ -192,17 +194,7 @@ class CiscoDriver(base_driver.Driver):
         LOG.debug("Deleting port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
 
-        cmds = commands.delete_port(
-            interface=port.interface,
-            vlan_id=port.vlan_id,
-            trunked=port.trunked)
-
-        self.detach(port)
-        return self._run_commands(
-            port.switch_host,
-            port.switch_username,
-            port.switch_password,
-            cmds)
+        return self.clear(port)
 
     def attach(self, port):
 
