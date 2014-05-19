@@ -26,13 +26,16 @@ from neutron.openstack.common import log as logging
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
 
+import re
+
 LOG = logging.getLogger(__name__)
 print __name__
 
 
-# TODO(morgabra) fix this
+# TODO(morgabra) rethink this
 IGNORE_CLEAR = [
-"no spanning-tree bpduguard enable"
+    re.compile("no spanning-tree bpduguard enable"),
+    re.compile("no channel-group \d+ mode active")
 ]
 
 class CiscoException(base_driver.DriverException):
@@ -149,11 +152,11 @@ class CiscoDriver(base_driver.Driver):
         cmds = cmds + commands._configure_interface('ethernet', eth_int)
         cmds = cmds + eth_conf + ['shutdown']
 
-        # TODO(morgabra) Remove this when it works
-        for cmd in IGNORE_CLEAR:
-            if cmd in cmds:
-                i = cmds.index(cmd)
-                cmds.pop(i)
+        def _filter_clear_commands(c):
+            for r in IGNORE_CLEAR:
+                return r.match(c)
+
+        cmds = [c for c in cmds if not _filter_clear_commands(c)]
 
         self._run_commands(
             port.switch_host,
