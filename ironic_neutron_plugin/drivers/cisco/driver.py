@@ -145,9 +145,9 @@ class CiscoDriver(base_driver.Driver):
         eth_conf = self.show(port, type='ethernet')
         eth_conf = [self._negate_conf(c) for c in eth_conf]
 
-        cmds = commands._configure_interface('ethernet', eth_int)
+        cmds = commands._delete_port_channel_interface(portchan_int)
+        cmds = cmds + commands._configure_interface('ethernet', eth_int)
         cmds = cmds + eth_conf + ['shutdown']
-        cmds = cmds + commands._delete_port_channel_interface(portchan_int)
 
         # TODO(morgabra) Remove this when it works
         for cmd in IGNORE_CLEAR:
