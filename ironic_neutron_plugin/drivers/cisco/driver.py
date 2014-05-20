@@ -275,6 +275,8 @@ class CiscoDriver(base_driver.Driver):
         try:
             LOG.debug("starting session: %s" % (port.switch_host))
 
+            if self.dry_run:
+                return None
             return self.ncclient.connect(host=port.switch_host,
                                          port=22, # FIXME(morgabra) configurable
                                          username=port.switch_username,

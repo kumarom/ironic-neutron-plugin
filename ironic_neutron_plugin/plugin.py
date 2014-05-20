@@ -138,12 +138,23 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             session=session)
         return port_ext.as_dict()
 
-    def _update_port_ext(self, res_port, req_port, session=None):
+    def _update_port_ext(self, original_port, res_port, req_port, session=None):
         """Update db model keeping track of extension data."""
+
         commit = self._get_port_attr(req_port, "commit")
+        trunked = self._get_port_attr(req_port, "trunked")
         hardware_id = self._get_port_attr(req_port, "switch:hardware_id")
+
+        # we cannot allow the trunked flag to change for already committed ports.
+        if trunked != None and (original_port["trunked"] != trunked):
+            if original_port["commit"] and (commit != False):
+                msg = "cannot update trunked flag when commit=true"
+                raise exc.InvalidInput(error_message=msg)
+
+
         port_ext = db.update_port_ext(
             port_id=res_port["id"],
+            trunked=trunked,
             commit=commit,
             hardware_id=hardware_id,
             session=session)
@@ -286,7 +297,7 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                                                               port)
 
             # Process extension data
-            port_ext = self._update_port_ext(updated_port, port, session=session)
+            port_ext = self._update_port_ext(original_port, updated_port, port, session=session)
             switchports = self._update_switchports(updated_port, port, session=session)
             self._find_port_dict_extensions(
                 updated_port, None, port_ext=port_ext,

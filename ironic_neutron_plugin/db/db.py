@@ -62,7 +62,7 @@ def filter_port_ext(session=None, **kwargs):
                 filter_by(**kwargs))
 
 
-def update_port_ext(port_id, commit=None, hardware_id=None, session=None):
+def update_port_ext(port_id, commit=None, hardware_id=None, trunked=None, session=None):
     if not session:
         session = db_api.get_session()
 
@@ -78,6 +78,10 @@ def update_port_ext(port_id, commit=None, hardware_id=None, session=None):
 
         if hardware_id != None:
             port.hardware_id = hardware_id
+            updated = True
+
+        if trunked != None:
+            port.trunked = trunked
             updated = True
 
         if updated:
