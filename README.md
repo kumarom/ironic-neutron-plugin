@@ -1,20 +1,3 @@
-+--------------------------------------+-------------+------------------------------------------------------+
-| id                                   | name        | subnets                                              |
-+--------------------------------------+-------------+------------------------------------------------------+
-| 81ad7985-36f5-4e3d-bae5-0dbc88bcbc13 | DECOM       | dd3d3c31-0b6b-4daa-9e85-d979f809acf0 10.129.0.0/25   |
-| a42e1191-908d-470c-9260-dbbe18003e50 | SNET-Cust   | 95034068-3aa6-40c3-9f0d-7e9b3defa6ec 10.128.0.0/25   |
-| 6c829253-fd84-4f76-b4f0-1778d5d29411 | PUBLIC-Cust | 094485c0-7b94-4ec5-9438-2c772ea4a62e 10.127.104.0/25 |
-+--------------------------------------+-------------+------------------------------------------------------+
-
-
-curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": true, "trunked": true, "network_id": "6c829253-fd84-4f76-b4f0-1778d5d29411", "tenant_id": "mytenant"]}}'
-
-curl -XPUT localhost:9696/v2.0/ports/5da0bf72-53c9-43d7-b3b7-0e12bad4ae17 -H 'Content-Type: application/json' -d '{"port": {"commit": false}}'
-
-curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": true, "trunked": true, "network_id": "6c829253-fd84-4f76-b4f0-1778d5d29411", "tenant_id": "mytenant", "switch:hardware_id": "device21", "switch:ports": [{"switch_id": "switch1", "name": "eth0", "port": "Eth1/21"}, {"switch_id": "switch2", "name": "eth1", "port": "Eth1/21"}]}}'
-
-curl -XPOST localhost:9696/v2.0/ports -H 'Content-Type: application/json' -d '{"port": {"commit": true, "trunked": false, "network_id": "6c829253-fd84-4f76-b4f0-1778d5d29411", "tenant_id": "mytenant", "switch:hardware_id": "device21", "switch:ports": [{"switch_id": "switch1", "name": "eth0", "port": "Eth1/21"}, {"switch_id": "switch2", "name": "eth1", "port": "Eth1/21"}]}}'
-
 ironic-neutron-plugin
 =====================
 
