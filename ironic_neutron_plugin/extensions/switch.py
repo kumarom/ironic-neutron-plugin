@@ -67,7 +67,7 @@ class SwitchController(wsgi.Controller):
             body = body.pop("switch")
         except KeyError:
             raise exc.BadRequest(
-                resource="swtich",
+                resource="switch",
                 reason="'switch' not found in request body")
 
         try:
