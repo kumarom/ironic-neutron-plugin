@@ -120,7 +120,7 @@ class DriverManager(object):
             if not neutron_port["trunked"]:
                 # TODO(morgabra) There should probably be a mechanism for picking
                 # which switchport is configured for access if there is more than 1
-                switchports = switchports[:1]
+                pass
 
             for switchport in switchports:
 
