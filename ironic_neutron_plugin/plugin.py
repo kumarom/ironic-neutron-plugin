@@ -1,4 +1,4 @@
-# Copyright 2014 Rackspace, Inc.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -8,43 +8,37 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from neutron.api.v2 import attributes
-
-from sqlalchemy.orm import exc as sa_exc
-from neutron.common import exceptions as exc
-
-from neutron.common import constants as const
-
-from neutron.extensions import extra_dhcp_opt as edo_ext
-from neutron.extensions import allowedaddresspairs as addr_pair
-from neutron.plugins.ml2.common import exceptions as ml2_exc
-from neutron.openstack.common import excutils
-
-from neutron.db import models_v2
-
-from neutron.plugins.ml2 import driver_context
-
-from neutron.db import db_base_plugin_v2
-
-from neutron.plugins.ml2 import plugin
-from neutron.plugins.ml2 import driver_api as api
 
 from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.drivers import manager
 from ironic_neutron_plugin.extensions import switch
 
+from neutron.api.v2 import attributes
+from neutron.common import constants as const
+from neutron.common import exceptions as exc
+from neutron.db import db_base_plugin_v2
+from neutron.db import models_v2
+from neutron.extensions import allowedaddresspairs as addr_pair
+from neutron.extensions import extra_dhcp_opt as edo_ext
+from neutron.openstack.common import excutils
 from neutron.openstack.common import log as logging
+from neutron.plugins.ml2.common import exceptions as ml2_exc
+from neutron.plugins.ml2 import driver_api as api
+from neutron.plugins.ml2 import driver_context
+from neutron.plugins.ml2 import plugin
+
+from sqlalchemy.orm import exc as sa_exc
 
 LOG = logging.getLogger(__name__)
 
 
 class IronicMl2Plugin(plugin.Ml2Plugin):
-    """
-    Base Ml2Plugin with added extensions:
+    """Base Ml2Plugin with added extensions:
         1) physical switch credential management/port mappings
         2) "commit" flag on the port object
         3) "trunked" flag on the port object
@@ -54,8 +48,9 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         2) The mech_context contained the request body
            (for extension field processing)
 
-    TODO(morgabra) Some of this stuff might make it upstream with some attention
-    (physical portmaps?), but other stuff might be a harder sell. ("commit" flag)
+    TODO(morgabra) Some of this stuff might make it upstream with some
+    attention (physical portmaps?), but other stuff might be a harder sell.
+    ("commit" flag)
 
     TODO(morgabra) Currently there's an additional driver abstraction layer
     for the mechanism, which should probably be split out in leu of different
@@ -92,8 +87,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             val = None
         return val
 
-    def _find_port_dict_extensions(self, port_res, port_db,
-                                   port_ext=None, switchports=None, session=None):
+    def _find_port_dict_extensions(self, port_res, port_db, port_ext=None,
+                                   switchports=None, session=None):
         """Looks up extension data and updates port_res."""
         if not port_ext:
             port_ext = db.get_port_ext(port_res["id"], session=session)
@@ -124,19 +119,19 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             session=session)
         return port_ext.as_dict()
 
-    def _update_port_ext(self, original_port, res_port, req_port, session=None):
+    def _update_port_ext(self, original_port, res_port, req_port,
+                         session=None):
         """Update db model keeping track of extension data."""
 
         commit = self._get_port_attr(req_port, "commit")
         trunked = self._get_port_attr(req_port, "trunked")
         hardware_id = self._get_port_attr(req_port, "switch:hardware_id")
 
-        # we cannot allow the trunked flag to change for already committed ports.
-        if trunked != None and (original_port["trunked"] != trunked):
-            if original_port["commit"] and (commit != False):
+        # we cannot allow the trunked flag to change if committed.
+        if trunked is not None and (original_port["trunked"] != trunked):
+            if original_port["commit"] and (commit is not False):
                 msg = "cannot update trunked flag when commit=true"
                 raise exc.InvalidInput(error_message=msg)
-
 
         port_ext = db.update_port_ext(
             port_id=res_port["id"],
@@ -157,24 +152,18 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             msg = "switch:ports requires switch:hardware_id"
             raise exc.InvalidInput(error_message=msg)
 
-        # We add hardware_id from the top-level object to each switchport, which
-        # the portmap controller expects and allows us to use the same code.
         for sp in switchports:
             sp["hardware_id"] = hardware_id
 
-        # TODO(morgabra) This is not all that intuitive and maybe wrong. Instead
-        # of erroring if there are switchports already available for the hardware_id
-        # and requiring a separate call to delete them, we can just update them
-        # if they aren't in use (which update_portmaps() does for us.)
         switchports = switch.SwitchPortController.update_switchports(
             switchports, session=session)
         return [sp.as_dict() for sp in switchports]
 
-    def _validate_port_can_commit(self, res_port, req_port, session=None):
-        """
-        Poorly named function that determines if a port can actually be configured
-        given the state of the system. (ex. do not allow a non-trunked port to be
-        committed to a running trunked config.)
+    def _validate_port_can_commit(self, res_port, req_port,
+                                  session=None):
+        """Poorly named function that determines if a port can actually
+        be configured given the state of the system. (ex. do not allow a
+        non-trunked port to be committed to a running trunked config.)
         """
         switchport_ids = [p["id"] for p in res_port["switch:ports"]]
 
@@ -185,8 +174,9 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         bound_port_ids = []
         if switchport_ids:
             # Fetch all existing networks we are attached to.
-            portbindings = list(db.filter_switchport_bindings_by_switch_port_ids(
-                switchport_ids))
+            portbindings = db.filter_switchport_bindings_by_switch_port_ids(
+                switchport_ids)
+            portbindings = list(portbindings)
             bound_port_ids = set([pb.port_id for pb in portbindings])
 
         # We can't attach to a non-trunked network if the port is already
@@ -223,10 +213,13 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             result = super(plugin.Ml2Plugin, self).create_port(context, port)
 
             # Process extension data
-            port_ext = self._create_port_ext(result, port, session=session)
-            switchports = self._update_switchports(result, port, session=session)
-            self._find_port_dict_extensions(result, None,
-                port_ext=port_ext, switchports=switchports)
+            port_ext = self._create_port_ext(
+                result, port, session=session)
+            switchports = self._update_switchports(
+                result, port, session=session)
+            self._find_port_dict_extensions(
+                result, None, port_ext=port_ext, switchports=switchports)
+
             # Validate we can actually configure this port
             if result["commit"]:
                 do_commit = True
@@ -252,8 +245,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                 self.mechanism_manager.create_port_postcommit(mech_context)
         except ml2_exc.MechanismDriverError:
             with excutils.save_and_reraise_exception():
-                LOG.error(_("mechanism_manager.create_port_postcommit "
-                            "failed, deleting port '%s'"), result['id'])
+                LOG.error(("mechanism_manager.create_port_postcommit "
+                           "failed, deleting port '%s'"), result['id'])
                 self.delete_port(context, result['id'])
         self.notify_security_groups_member_updated(context, result)
         return result
@@ -279,12 +272,14 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             self._find_port_dict_extensions(
                 original_port, None, session=session)
 
-            updated_port = super(plugin.Ml2Plugin, self).update_port(context, id,
-                                                              port)
+            updated_port = super(plugin.Ml2Plugin, self).update_port(
+                context, id, port)
 
             # Process extension data
-            port_ext = self._update_port_ext(original_port, updated_port, port, session=session)
-            switchports = self._update_switchports(updated_port, port, session=session)
+            port_ext = self._update_port_ext(
+                original_port, updated_port, port, session=session)
+            switchports = self._update_switchports(
+                updated_port, port, session=session)
             self._find_port_dict_extensions(
                 updated_port, None, port_ext=port_ext,
                 switchports=switchports, session=session)
@@ -341,14 +336,14 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             context, id, l3_port_check=True)
         self._delete_port_ext(id)
 
-
     def get_ports(self, context, filters=None, fields=None,
                   sorts=None, limit=None, marker=None,
                   page_reverse=False):
 
         # We want to allow filtering by the hardware_id extension field.
         if 'switch:hardware_id' in filters and filters['switch:hardware_id']:
-            ports = db.filter_port_ext(hardware_id=filters['switch:hardware_id'])
+            ports = db.filter_port_ext(
+                hardware_id=filters['switch:hardware_id'])
             port_ids = [p.port_id for p in ports]
 
             # no ports match that hardware_id, so we can bail early
@@ -376,25 +371,26 @@ class IronicMechanismDriver(api.MechanismDriver):
         network = context.network.current
         current = context.current
 
-        LOG.info("create_port_postcommit() commit=True for port %s, attaching" % current["id"])
+        LOG.info(("create_port_postcommit() commit=True "
+                  "for port %s, attaching" % current["id"]))
         self.driver_manager.attach(current, network)
 
-
     def update_port_postcommit(self, context):
-        """
-        TODO(morgabra) Failures here do *not* reset the database state :(
-        TODO(morgabra) Rethink this - it's a bummer that this single function
-        is responsible for figuring out if it should commit or uncommit a config
+        """TODO(morgabra) Failures here do *not* reset the database state :(
+        TODO(morgabra) Rethink this - maybe the base plugin should call
+        a different function for commit/uncommit?
         """
         network = context.network.current
         original = context.original
         current = context.current
 
         if original["commit"] and not current["commit"]:
-            LOG.info("update_port_postcommit() commit=True -> commit=False for port %s, detaching" % current["id"])
+            LOG.info(("update_port_postcommit() commit=True -> commit=False "
+                      "for port %s, detaching" % current["id"]))
             self.driver_manager.detach(current, network)
         else:
-            LOG.info("update_port_postcommit() commit=False -> commit=True for port %s, attaching" % current["id"])
+            LOG.info(("update_port_postcommit() commit=False -> commit=True "
+                      "for port %s, attaching" % current["id"]))
             self.driver_manager.attach(current, network)
 
     def delete_port_postcommit(self, context):
@@ -405,7 +401,8 @@ class IronicMechanismDriver(api.MechanismDriver):
             msg = "cannot update port, no switchports found"
             raise exc.InvalidInput(error_message=msg)
 
-        LOG.info("delete_port_postcommit() for port %s, dettaching" % current["id"])
+        LOG.info(("delete_port_postcommit() for port "
+                  "%s, dettaching" % current["id"]))
         self.driver_manager.detach(current, network)
 
     def bind_port(self, context):

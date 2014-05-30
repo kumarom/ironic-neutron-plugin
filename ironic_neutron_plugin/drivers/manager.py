@@ -1,4 +1,4 @@
-# Copyright 2014 Rackspace, Inc.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -8,7 +8,8 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -106,8 +107,8 @@ class DriverManager(object):
         """Realize a neutron port configuration on given physical ports.
 
         We can't just wrap this in a database transaction because we'll have
-        to manually recover the switch configurations if we fail."""
-
+        to manually recover the switch configurations if we fail.
+        """
         switchports = self._get_switchports(neutron_port)
 
         try:
@@ -118,8 +119,8 @@ class DriverManager(object):
                 raise base_driver.DriverException(msg)
 
             if not neutron_port["trunked"]:
-                # TODO(morgabra) There should probably be a mechanism for picking
-                # which switchport is configured for access if there is more than 1
+                # TODO(morgabra) There should be a mechanism for picking
+                # which switchport to configure - maybe by name?
                 pass
 
             for switchport in switchports:
@@ -142,10 +143,7 @@ class DriverManager(object):
                 self._set_portbinding_state(
                     new_portbinding, models.SwitchPortBindingState.ACTIVE)
 
-        #TODO(morgabra) Fix this
         except Exception as e:
-            # TODO(morgabra) We really need a method that clears a port config and shuts it down.
-            # This will break for half-configured ports or ports with configurations we don't expect.
             for switchport in switchports:
                 self._delete_portbinding(neutron_port, switchport)
             LOG.error('Failed configuring port: %s', e)
@@ -177,7 +175,8 @@ class DriverManager(object):
                     continue
 
                 self._set_portbinding_state(
-                    active_portbinding, models.SwitchPortBindingState.WANT_INACTIVE)
+                    active_portbinding,
+                    models.SwitchPortBindingState.WANT_INACTIVE)
 
                 driver = self._get_driver(switchport)
                 port_info = self._make_port_info(
@@ -190,10 +189,7 @@ class DriverManager(object):
 
                 self._delete_portbinding(neutron_port, switchport)
 
-        #TODO(morgabra) Fix this
         except Exception as e:
-            # TODO(morgabra) We really need a method that clears a port config and shuts it down.
-            # This will break for half-configured ports or ports with configurations we don't expect.
             for switchport in switchports:
                 self._delete_portbinding(neutron_port, switchport)
             LOG.error('Failed configuring port: %s', e)

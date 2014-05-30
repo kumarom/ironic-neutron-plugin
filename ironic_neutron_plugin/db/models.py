@@ -1,4 +1,4 @@
-# Copyright 2014 Rackspace, Inc.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -8,14 +8,15 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
 from Crypto.Cipher import AES
 from Crypto import Random
 
-from ironic_neutron_plugin.config import cfg
+from ironic_neutron_plugin import config
 
 from neutron.db import model_base
 from neutron.db import models_v2
@@ -49,13 +50,13 @@ class EncryptedValue(sa.TypeDecorator):
 
     def process_bind_param(self, value, dialect):
         if value:
-            key = cfg.CONF.ironic.credential_secret
+            key = config.cfg.CONF.ironic.credential_secret
             value = aes_encrypt(key, value)
         return value
 
     def process_result_value(self, value, dialect):
         if value:
-            key = cfg.CONF.ironic.credential_secret
+            key = config.cfg.CONF.ironic.credential_secret
             value = aes_decrypt(key, value)
         return value
 
@@ -79,7 +80,6 @@ class SwitchPort(model_base.BASEV2, models_v2.HasId):
 
     # Extra
     mac_address = sa.Column(sa.String(255), nullable=True)
-
 
     def as_dict(self):
         return {
@@ -105,9 +105,8 @@ class SwitchPort(model_base.BASEV2, models_v2.HasId):
         }
 
 
-
 class Switch(model_base.BASEV2):
-    """An external attachment point"""
+    """An external attachment point."""
 
     __tablename__ = "switches"
 
@@ -149,7 +148,6 @@ class PortExt(model_base.BASEV2):
 
     commit = sa.Column(sa.Boolean, nullable=False)
     trunked = sa.Column(sa.Boolean, nullable=True)
-
 
     def as_dict(self):
         return {

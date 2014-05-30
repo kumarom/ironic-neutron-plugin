@@ -1,4 +1,4 @@
-# Copyright 2014 Rackspace, Inc.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -8,9 +8,11 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import mock
 
 import os
@@ -52,6 +54,7 @@ BOUND_SEGMENT2 = {api.NETWORK_TYPE: p_const.TYPE_VLAN,
                   api.PHYSICAL_NETWORK: PHYS_NET,
                   api.SEGMENTATION_ID: VLAN_START + 1}
 
+
 class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
 
     def setUp(self):
@@ -83,7 +86,6 @@ class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
         vlan_config.cfg.CONF.set_override('network_vlan_ranges',
                                           [phys_vrange],
                                           'ml2_type_vlan')
-
 
         # Mock port context values for bound_segments and 'status'.
         self.mock_bound_segment = mock.patch.object(

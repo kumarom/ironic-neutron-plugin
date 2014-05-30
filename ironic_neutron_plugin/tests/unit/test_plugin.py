@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack Foundation.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,32 +14,29 @@
 # limitations under the License.
 
 from ironic_neutron_plugin.tests import base
-
 from neutron.tests.unit import test_db_plugin
 
 
 class TestIronicBasicGet(base.IronicMl2MechanismTestCase,
-                        test_db_plugin.TestBasicGet):
+                         test_db_plugin.TestBasicGet):
     pass
 
 
 class TestIronicV2HTTPResponse(base.IronicMl2MechanismTestCase,
-                              test_db_plugin.TestV2HTTPResponse):
+                               test_db_plugin.TestV2HTTPResponse):
     pass
 
 
 class TestIronicPortsV2(base.IronicMl2MechanismTestCase,
-                       test_db_plugin.TestPortsV2):
+                        test_db_plugin.TestPortsV2):
     pass
 
 
 class TestIronicNetworksV2(base.IronicMl2MechanismTestCase,
-                          test_db_plugin.TestNetworksV2):
+                           test_db_plugin.TestNetworksV2):
     pass
 
 
 class TestIronicSubnetsV2(base.IronicMl2MechanismTestCase,
-                         test_db_plugin.TestSubnetsV2):
+                          test_db_plugin.TestSubnetsV2):
     pass
-
-

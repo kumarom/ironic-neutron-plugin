@@ -1,24 +1,24 @@
-# Copyright 2013 OpenStack Foundation
-# All rights reserved.
+# Copyright (c) 2014 OpenStack Foundation.
 #
-#    Licensed under the Apache License, Version 2.0 (the "License"); you may
-#    not use this file except in compliance with the License. You may obtain
-#    a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#         http://www.apache.org/licenses/LICENSE-2.0
+#    http://www.apache.org/licenses/LICENSE-2.0
 #
-#    Unless required by applicable law or agreed to in writing, software
-#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-#    License for the specific language governing permissions and limitations
-#    under the License.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Implements a Nexus-OS NETCONF over SSHv2 API Client.
 
 This is lifted partially from the cisco ml2 mechanism.
 """
-from ironic_neutron_plugin.config import cfg
+from ironic_neutron_plugin import config
 
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
@@ -29,8 +29,6 @@ from ironic_neutron_plugin.drivers.cisco import commands
 import re
 
 LOG = logging.getLogger(__name__)
-print __name__
-
 
 # TODO(morgabra) rethink this
 IGNORE_CLEAR = [
@@ -39,39 +37,38 @@ IGNORE_CLEAR = [
     re.compile("no channel-group \d+ mode active")
 ]
 
+
 class CiscoException(base_driver.DriverException):
     pass
 
 
 class CiscoDriver(base_driver.Driver):
-    """
-    TODO(morgabra) Close sessions
-    """
+    """TODO(morgabra) Close sessions."""
 
     def __init__(self, dry_run=None):
         self.dry_run = dry_run
-        if dry_run == None:
-            self.dry_run = cfg.CONF.ironic.dry_run
+        if dry_run is None:
+            self.dry_run = config.cfg.CONF.ironic.dry_run
         self.ncclient = None
 
     def _filter_interface_conf(self, c):
-        """determine if an interface configuration string is relevant."""
+        """Determine if an interface configuration string is relevant."""
         if c.startswith("!"):
-          return False
+            return False
 
         if c.startswith("version "):
-          return False
+            return False
 
         if c.startswith("interface"):
-          return False
+            return False
 
         if not c:
-          return False
+            return False
 
         return True
 
     def _negate_conf(self, c):
-        """negate a line of configuration"""
+        """Negate a line of configuration."""
         return "no %s" % c
 
     def _get_result(self, res):
@@ -99,7 +96,9 @@ class CiscoDriver(base_driver.Driver):
         </rpc-reply>
 
         Example return value:
-        ['shutdown', 'spanning-tree port type edge', 'spanning-tree bpduguard enable']
+        ['shutdown',
+         'spanning-tree port type edge',
+         'spanning-tree bpduguard enable']
         """
         if not res:
             return []
@@ -131,8 +130,7 @@ class CiscoDriver(base_driver.Driver):
         return self._get_result(result)
 
     def clear(self, port, session=None):
-        """
-        Remove all configuration for a given interface, which includes
+        """Remove all configuration for a given interface, which includes
         the ethernet interface, related port-channel, and any dhcp snooping
         bindings or other port security features.
 
@@ -226,7 +224,6 @@ class CiscoDriver(base_driver.Driver):
         if not session:
             session = self._connect(port)
 
-
         LOG.debug("Detaching vlan %s from interface %s"
                   % (port.vlan_id, port.interface))
 
@@ -248,7 +245,6 @@ class CiscoDriver(base_driver.Driver):
         distributions. It is imported dynamically in this module so that
         the import can be mocked, allowing unit testing without requiring
         the installation of ncclient.
-
         """
         return importutils.import_module('ncclient.manager')
 
@@ -278,10 +274,11 @@ class CiscoDriver(base_driver.Driver):
 
             if self.dry_run:
                 return None
-            return self.ncclient.connect(host=port.switch_host,
-                                         port=22, # FIXME(morgabra) configurable
-                                         username=port.switch_username,
-                                         password=port.switch_password)
+            return self.ncclient.connect(
+                host=port.switch_host,
+                port=22,  # FIXME(morgabra) configurable
+                username=port.switch_username,
+                password=port.switch_password)
         except Exception as e:
             raise CiscoException(e)
 

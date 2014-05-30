@@ -1,4 +1,4 @@
-# Copyright 2014 Rackspace, Inc.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -8,7 +8,8 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -62,7 +63,8 @@ def filter_port_ext(session=None, **kwargs):
                 filter_by(**kwargs))
 
 
-def update_port_ext(port_id, commit=None, hardware_id=None, trunked=None, session=None):
+def update_port_ext(port_id, commit=None, hardware_id=None,
+                    trunked=None, session=None):
     if not session:
         session = db_api.get_session()
 
@@ -72,15 +74,15 @@ def update_port_ext(port_id, commit=None, hardware_id=None, trunked=None, sessio
         port = (session.query(models.PortExt).
                 get(port_id))
 
-        if commit != None:
+        if commit is not None:
             port.commit = commit
             updated = True
 
-        if hardware_id != None:
+        if hardware_id is not None:
             port.hardware_id = hardware_id
             updated = True
 
-        if trunked != None:
+        if trunked is not None:
             port.trunked = trunked
             updated = True
 
@@ -106,7 +108,8 @@ def delete_port_ext(port_id, session=None):
         return True
 
 
-def create_switchport_binding(port_id, network_id, switch_port_id, state=None, session=None):
+def create_switchport_binding(port_id, network_id, switch_port_id,
+                              state=None, session=None):
     if not session:
         session = db_api.get_session()
 
@@ -158,7 +161,8 @@ def filter_switchport_bindings_by_switch_port_ids(ids, session=None):
                 filter(models.SwitchPortBinding.switch_port_id.in_(ids)))
 
 
-def update_switchport_binding_state(port_id, network_id, switch_port_id, state, session=None):
+def update_switchport_binding_state(port_id, network_id, switch_port_id, state,
+                                    session=None):
     if not session:
         session = db_api.get_session()
 
@@ -171,7 +175,8 @@ def update_switchport_binding_state(port_id, network_id, switch_port_id, state, 
         return portbinding
 
 
-def delete_switchport_binding(port_id, network_id, switch_port_id, session=None):
+def delete_switchport_binding(port_id, network_id, switch_port_id,
+                              session=None):
     if not session:
         session = db_api.get_session()
 
@@ -188,7 +193,7 @@ def delete_switchport_binding(port_id, network_id, switch_port_id, session=None)
 
 
 def create_switchports(switchports,
-                      session=None):
+                       session=None):
     if not session:
         session = db_api.get_session()
 
@@ -259,8 +264,7 @@ def delete_switchports(switchport_ids, session=None):
 
 
 def compare_switchports(sp_models, sp_dicts, with_id=False, session=None):
-    """
-    Compare a hardware_ids switchports with a given list of dicts.
+    """Compare a hardware_ids switchports with a given list of dicts.
 
     TODO(morgbara) Can you overload __eq__ on an sqlalchemy model? I actually
     want functional equivalence, unrelated to the model ID.
@@ -288,7 +292,8 @@ def compare_switchports(sp_models, sp_dicts, with_id=False, session=None):
     return True
 
 
-def create_switch(id, host, username, password, switch_type, description=None, session=None):
+def create_switch(id, host, username, password, switch_type,
+                  description=None, session=None):
     if not session:
         session = db_api.get_session()
 

@@ -1,4 +1,4 @@
-# Copyright 2014 Rackspace, Inc.
+# Copyright (c) 2014 OpenStack Foundation.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -8,7 +8,8 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -141,13 +142,13 @@ class SwitchPortController(wsgi.Controller):
         # Ensure all given hardware_ids are !None
         hardware_ids = set([s.get("hardware_id") for s in switchports])
         if None in hardware_ids:
-             raise exc.BadRequest(
+            raise exc.BadRequest(
                 resource="switchports",
                 reason="hardware_id cannot be empty")
 
         # Ensure all given hardware_ids match
         if (len(hardware_ids) != 1):
-             raise exc.BadRequest(
+            raise exc.BadRequest(
                 resource="switchports",
                 reason="all switchport hardware_ids must match")
 
@@ -155,8 +156,7 @@ class SwitchPortController(wsgi.Controller):
 
     @classmethod
     def validate_switchports(cls, switchports, session=None):
-        """
-        TODO(morgabra) Split this up, think about it more. It's
+        """TODO(morgabra) Split this up, think about it more. It's
         inefficient and large.
         """
         if not session:
@@ -170,45 +170,48 @@ class SwitchPortController(wsgi.Controller):
         hardware_id = cls._validate_hardware_id(switchports)
 
         # Ensure no switchports exist for the given hardware_id
-        existing = list(db.filter_switchports(hardware_id=hardware_id, session=session))
+        existing = list(db.filter_switchports(
+            hardware_id=hardware_id, session=session))
         if existing:
-             raise exc.BadRequest(
+            raise exc.BadRequest(
                 resource="switchports",
-                reason="switchports already exist for hardware_id='%s'" % hardware_id)
+                reason=("switchports already exist for "
+                        "hardware_id='%s'" % hardware_id))
 
         # Ensure all given names are !None
         names = set([s.get("name") for s in switchports])
         if None in names:
-             raise exc.BadRequest(
+            raise exc.BadRequest(
                 resource="switchports",
                 reason="name cannot be empty")
 
         # Ensure all given names are unique
         if (len(names) != len(switchports)):
-             raise exc.BadRequest(
+            raise exc.BadRequest(
                 resource="switchports",
                 reason="all switchport names must be unique")
 
         # Ensure all given switch_id/port maps are unique
         ports = set([(s.get("switch_id"), s.get("port")) for s in switchports])
         if (len(ports) != len(switchports)):
-             raise exc.BadRequest(
+            raise exc.BadRequest(
                 resource="switchports",
-                reason="cannot add switchport with identical switch_id/port values")
+                reason=("cannot add switchport with identical "
+                        "switch_id/port values"))
 
         for switch_id, port in ports:
 
             # Ensure switch_id is !None
             if not switch_id:
-             raise exc.BadRequest(
-                resource="switchports",
-                reason="switch_id cannot be empty")
+                raise exc.BadRequest(
+                    resource="switchports",
+                    reason="switch_id cannot be empty")
 
             # Ensure switch_id is !None
             if not port:
-             raise exc.BadRequest(
-                resource="switchports",
-                reason="port cannot be empty")
+                raise exc.BadRequest(
+                    resource="switchports",
+                    reason="port cannot be empty")
 
             # Ensure referenced switch actually exists
             switch = db.get_switch(switch_id, session=session)
@@ -233,7 +236,8 @@ class SwitchPortController(wsgi.Controller):
             session = db_api.get_session()
 
         with session.begin(subtransactions=True):
-            switchports = cls.validate_switchports(switchports, session=session)
+            switchports = cls.validate_switchports(
+                switchports, session=session)
             return db.create_switchports(switchports, session=session)
 
     @classmethod
@@ -241,19 +245,23 @@ class SwitchPortController(wsgi.Controller):
         if not session:
             session = db_api.get_session()
 
-        # find pre-existing portmaps and check if they are in-use before deleting.
+        # find portmaps and check if they are in-use before deleting.
         with session.begin(subtransactions=True):
 
             if not switchports:
-                switchports = list(db.filter_switchports(hardware_id=hardware_id, session=session))
+                switchports = list(db.filter_switchports(
+                    hardware_id=hardware_id, session=session))
 
             switchport_ids = [sp.id for sp in switchports]
             if switchport_ids:
-                bindings = list(db.filter_switchport_bindings_by_switch_port_ids(switchport_ids, session=session))
+                bindings = db.filter_switchport_bindings_by_switch_port_ids(
+                    switchport_ids, session=session)
+                bindings = list(bindings)
                 if bindings:
                     raise exc.BadRequest(
                         resource="switchport",
-                        reason=("Cannot delete, switchport(s) '%s' in use" % (','.join(switchport_ids)))
+                        reason=("Cannot delete, switchport(s) "
+                                "'%s' in use" % (','.join(switchport_ids)))
                     )
             return db.delete_switchports(switchport_ids, session=session)
 
@@ -265,21 +273,24 @@ class SwitchPortController(wsgi.Controller):
         with session.begin(subtransactions=True):
 
             hardware_id = cls._validate_hardware_id(switchports)
-            originals = list(db.filter_switchports(hardware_id=hardware_id, session=session))
+            originals = list(db.filter_switchports(
+                hardware_id=hardware_id, session=session))
 
-            # If the given switchports match what exists in the db, we don't have to do anything.
-            equal = db.compare_switchports(originals, switchports, session=session)
+            # If the given switchports match what exists in the db,
+            # we don't have to do anything.
+            equal = db.compare_switchports(
+                originals, switchports, session=session)
 
             if equal:
-                LOG.info("No switchports update required for hardware_id %s" % (hardware_id))
+                LOG.info(("No switchports update required "
+                          "for hardware_id %s" % (hardware_id)))
                 return originals
             else:
-                LOG.info("Updating switchports for hardware_id %s" % (hardware_id))
-                # TODO(morgbara) this is a little ham-fisted, but it's *super* complicated to allow
-                # updating a switchport from underneath a running config.
+                LOG.info(("Updating switchports for "
+                          "hardware_id %s" % (hardware_id)))
+                # TODO(morgbara) this is a little ham-fisted
                 cls.delete_switchports(hardware_id, session=session)
                 return cls.create_switchports(switchports, session=session)
-
 
 
 class Switch(extensions.ExtensionDescriptor):
