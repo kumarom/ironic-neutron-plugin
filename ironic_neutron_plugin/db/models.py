@@ -15,7 +15,7 @@
 from Crypto.Cipher import AES
 from Crypto import Random
 
-from oslo.config import cfg
+from ironic_neutron_plugin.config import cfg
 
 from neutron.db import model_base
 from neutron.db import models_v2

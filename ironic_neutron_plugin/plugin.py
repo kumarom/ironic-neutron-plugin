@@ -39,21 +39,7 @@ from ironic_neutron_plugin.extensions import switch
 
 from neutron.openstack.common import log as logging
 
-from oslo.config import cfg
-
 LOG = logging.getLogger(__name__)
-
-
-ironic_opts = [
-    cfg.BoolOpt("dry_run",
-                default=False,
-                help="Log only, but exersize the mechanism."),
-    cfg.StrOpt("credential_secret",
-               help=("Secret AES key for encrypting switch credentials "
-                     " in the datastore."))
-]
-
-cfg.CONF.register_opts(ironic_opts, "ironic")
 
 
 class IronicMl2Plugin(plugin.Ml2Plugin):

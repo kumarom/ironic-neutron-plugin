@@ -108,15 +108,15 @@ class SwitchPortController(wsgi.Controller):
             switchports = db.get_all_switchports()
         return dict(switchports=[p.as_dict() for p in switchports])
 
-    def show(self, request, hardware_id):
-        switchports = db.filter_switchports(hardware_id=hardware_id)
+    def show(self, request, id):
+        switchports = list(db.filter_switchports(hardware_id=id))
         if not switchports:
             raise exc.NotFound(
-                resource="switchports %s" % (hardware_id))
+                resource="switchports %s" % (id))
         return dict(switchports=[s.as_dict() for s in switchports])
 
-    def delete(self, request, hardware_id):
-        return self.delete_switchports(hardware_id)
+    def delete(self, request, id):
+        return self.delete_switchports(id)
 
     def create(self, request):
         try:

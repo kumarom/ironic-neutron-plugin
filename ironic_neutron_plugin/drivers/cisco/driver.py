@@ -18,7 +18,7 @@ Implements a Nexus-OS NETCONF over SSHv2 API Client.
 
 This is lifted partially from the cisco ml2 mechanism.
 """
-from oslo.config import cfg
+from ironic_neutron_plugin.config import cfg
 
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
@@ -34,6 +34,7 @@ print __name__
 
 # TODO(morgabra) rethink this
 IGNORE_CLEAR = [
+    re.compile("no no snmp trap link-status"),
     re.compile("no spanning-tree bpduguard enable"),
     re.compile("no channel-group \d+ mode active")
 ]
