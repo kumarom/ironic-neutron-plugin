@@ -117,7 +117,7 @@ class SwitchPortController(wsgi.Controller):
         return dict(switchports=[s.as_dict() for s in switchports])
 
     def delete(self, request, id):
-        return self.delete_switchports(id)
+        self.delete_switchports(id)
 
     def create(self, request):
         try:

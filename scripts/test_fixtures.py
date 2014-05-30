@@ -96,23 +96,27 @@ def create_switch(url, switch):
     r = r.json()
     return r['switch']['id']
 
-def create_switchport(url, number, name, switch_id, primary):
-    switchport = {
-      "switch_id": switch_id,
-      "hardware_id": "device%s" % number,
-      "name": name,
-      "port": "Eth1/%s" % str(number),
-      "primary": primary
-    }
+def create_switchports(url, number, switch_ids):
+
+    def _make_switchport(id, port_no, switch_id):
+        return {
+            "switch_id": switch_id,
+            "hardware_id": "device%s" % (id),
+            "name": "eth%s" % str(port_no),
+            "port": "Eth1/%s" % str(id),
+        }
+
+    switchports = [_make_switchport(number, i, s) for (i, s) in enumerate(switch_ids)]
+
     r = requests.post('%s/v2.0/switchports' % url,
                       headers={'Content-Type': 'application/json'},
-                      data=json.dumps({'switchport': switchport}))
+                      data=json.dumps({'switchports': switchports}))
 
     if r.status_code != 200:
         raise FixtureException('create_switchport failed: %s' % r.text)
 
     r = r.json()
-    return r['switchport']['id']
+    return r['switchports']
 
 def main():
     parser = argparse.ArgumentParser(description='Add some development fixtures.')
@@ -136,8 +140,7 @@ def main():
 
 
     for i in xrange(5):
-      create_switchport(url, i, "eth0", switch1_id, primary=True)
-      create_switchport(url, i, "eth1", switch2_id, primary=False)
+      create_switchports(url, i, [switch1_id, switch2_id])
       print 'created switchports for device%s' % i
 
 if __name__ == "__main__":
