@@ -43,6 +43,8 @@ class CiscoException(base_driver.DriverException):
 
 
 class CiscoDriver(base_driver.Driver):
+    """TODO(morgabra) Close sessions."""
+
     def __init__(self, dry_run=None):
         self.dry_run = dry_run
         if dry_run is None:
@@ -112,11 +114,10 @@ class CiscoDriver(base_driver.Driver):
         # filter comments and other unrelated data
         return [c.strip() for c in res if self._filter_interface_conf(c)]
 
-    def show(self, port, type="ethernet"):
-        with self._connect(port) as session:
-            return self._do_show(port, session, type=type)
+    def show(self, port, type="ethernet", session=None):
+        if not session:
+            session = self._connect(port)
 
-    def _do_show(self, port, session, type="ethernet"):
         LOG.debug("Fetching interface %s" % (port.interface))
 
         eth_int = commands._make_ethernet_interface(port.interface)
@@ -128,7 +129,7 @@ class CiscoDriver(base_driver.Driver):
 
         return self._get_result(result)
 
-    def clear(self, port):
+    def clear(self, port, session=None):
         """Remove all configuration for a given interface, which includes
         the ethernet interface, related port-channel, and any dhcp snooping
         bindings or other port security features.
@@ -141,17 +142,16 @@ class CiscoDriver(base_driver.Driver):
 
         TODO(morgabra) port security (delete from the dhcp snooping table, etc)
         """
-        with self._connect(port) as session:
-            return self._do_clear(port, session)
+        if not session:
+            session = self._connect(port)
 
-    def _do_clear(self, port, session):
         LOG.debug("clearing interface %s" % (port.interface))
 
         interface = port.interface
         portchan_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
-        eth_conf = self._do_show(port, session, type='ethernet')
+        eth_conf = self.show(port, type='ethernet', session=session)
         eth_conf = [self._negate_conf(c) for c in eth_conf]
 
         cmds = commands._delete_port_channel_interface(portchan_int)
@@ -170,12 +170,11 @@ class CiscoDriver(base_driver.Driver):
             session,
             cmds)
 
-    def create(self, port):
-        with self._connect(port) as session:
-            return self._do_create(port, session)
+    def create(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
-    def _do_create(self, port, session):
-        self._do_clear(port, session)
+        self.clear(port, session=session)
 
         LOG.debug("Creating port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
@@ -194,21 +193,19 @@ class CiscoDriver(base_driver.Driver):
             session,
             cmds)
 
-    def delete(self, port):
-        with self._connect(port) as session:
-            return self._do_delete(port, session)
+    def delete(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
-    def _do_delete(self, port, session):
         LOG.debug("Deleting port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
 
-        return self._do_clear(port, session)
+        return self.clear(port, session=session)
 
-    def attach(self, port):
-        with self._connect(port) as session:
-            return self._do_attach(port, session)
+    def attach(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
-    def _do_attach(self, port, session):
         LOG.debug("Attaching vlan %s to interface %s"
                   % (port.vlan_id, port.interface))
 
@@ -223,11 +220,10 @@ class CiscoDriver(base_driver.Driver):
             session,
             cmds)
 
-    def detach(self, port):
-        with self._connect(port) as session:
-            return self._do_detach(port, session)
+    def detach(self, port, session=None):
+        if not session:
+            session = self._connect(port)
 
-    def _do_detach(self, port, session):
         LOG.debug("Detaching vlan %s from interface %s"
                   % (port.vlan_id, port.interface))
 
@@ -283,5 +279,11 @@ class CiscoDriver(base_driver.Driver):
                 port=22,  # FIXME(morgabra) configurable
                 username=port.switch_username,
                 password=port.switch_password)
+        except Exception as e:
+            raise CiscoException(e)
+
+    def _close(self, session):
+        try:
+            session.close_session()
         except Exception as e:
             raise CiscoException(e)
