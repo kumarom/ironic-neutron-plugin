@@ -50,6 +50,7 @@ class CiscoDriver(base_driver.Driver):
         if dry_run is None:
             self.dry_run = config.cfg.CONF.ironic.dry_run
         self.ncclient = None
+        self.connections = {}
 
     def _filter_interface_conf(self, c):
         """Determine if an interface configuration string is relevant."""
@@ -219,6 +220,27 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
+    def _connect(self, port):
+        c = self.connections.get(port.switch_host)
+
+        # TODO(morgabra) Things can go wrong here that could be solved
+        # with a reconnect, instead this will just throw.
+        if not c or not c.connected:
+            LOG.debug("starting session: %s" % (port.switch_host))
+            connect_args = {
+                "host": port.switch_host,
+                "port": 22,  #TODO(morgabra) configurable
+                "username": port.switch_username,
+                "password": port.switch_password
+            }
+            c = self.ncclient.connect(**connect_args)
+            c._session.transport.set_keepalive(30)
+            self.connections[port.switch_host] = c
+
+        LOG.debug("got session: %s" % (c.session_id))
+
+        return c
+
     def _run_commands(self, port, commands):
 
         if not commands:
@@ -234,19 +256,19 @@ class CiscoDriver(base_driver.Driver):
         if not self.ncclient:
             self.ncclient = self._import_ncclient()
 
+        c = None
         try:
-            LOG.debug("starting session: %s" % (port.switch_host))
-
-            connect_args = {
-                "host": port.switch_host,
-                "port": 22,  #TODO(morgabra) configurable
-                "username": port.switch_username,
-                "password": port.switch_password
-            }
-            with self.ncclient.connect(**connect_args) as session:
-                LOG.debug("started session: %s" % (session.session_id))
-                results = session.command(commands)
-            LOG.debug("ending session: %s" % session.session_id)
-            return results
+            c = self._connect(port)
+            return c.command(commands)
         except Exception as e:
             raise CiscoException(e)
+        finally:
+            # TODO(morgabra) Tell the difference between a connection error and
+            # and a config error. We don't need to clear the current connection
+            # for latter.
+            if c:
+                try:
+                    c.close_session()
+                except Exception as e:
+                    LOG.debug("Failed closing session: %s" % c.session_id)
+            self.connections[port.switch_host] = None
