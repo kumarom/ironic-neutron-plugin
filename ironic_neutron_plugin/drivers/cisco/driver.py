@@ -244,6 +244,9 @@ class CiscoDriver(base_driver.Driver):
                 "password": port.switch_password
             }
             with self.ncclient.connect(**connect_args) as session:
-                return session.command(commands)
+                LOG.debug("started session: %s" % (session.session_id))
+                results = session.command(commands)
+            LOG.debug("ending session: %s" % session.session_id)
+            return results
         except Exception as e:
             raise CiscoException(e)
