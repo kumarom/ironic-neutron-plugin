@@ -20,6 +20,13 @@ mechanism_drivers = ironic
 [ml2_type_vlan]
 network_vlan_ranges = <physical_network_name>,<physical_network_name>
 
+[quotas]
+quota_items = network,subnet,port
+default_quota = -1
+quota_network = -1
+quota_subnet = -1
+quota_port = -1
+
 [ironic]
 dry_run = True
 credential_secret = 44ee83001278fd0874ffe5b07ec94983
