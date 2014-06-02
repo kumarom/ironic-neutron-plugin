@@ -261,8 +261,6 @@ class CiscoDriver(base_driver.Driver):
             c = self._connect(port)
             return c.command(commands)
         except Exception as e:
-            raise CiscoException(e)
-        finally:
             # TODO(morgabra) Tell the difference between a connection error and
             # and a config error. We don't need to clear the current connection
             # for latter.
@@ -271,4 +269,6 @@ class CiscoDriver(base_driver.Driver):
                     c.close_session()
                 except Exception as e:
                     LOG.debug("Failed closing session: %s" % c.session_id)
-            self.connections[port.switch_host] = None
+                self.connections[port.switch_host] = None
+
+            raise CiscoException(e)
