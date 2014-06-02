@@ -223,18 +223,18 @@ class CiscoDriver(base_driver.Driver):
     def _connect(self, port):
         c = self.connections.get(port.switch_host)
 
-        # TODO(morgabra) Things can go wrong here that could be solved
-        # with a reconnect, instead this will just throw.
+        # TODO(morgabra) connected is updated from a thread, so obviously
+        # there are some issues with checking this here.
         if not c or not c.connected:
             LOG.debug("starting session: %s" % (port.switch_host))
             connect_args = {
                 "host": port.switch_host,
                 "port": 22,  #TODO(morgabra) configurable
                 "username": port.switch_username,
-                "password": port.switch_password
+                "password": port.switch_password,
+                "timeout": 10  #TOOD(morgabra) configurable
             }
             c = self.ncclient.connect(**connect_args)
-            c._session.transport.set_keepalive(30)
             self.connections[port.switch_host] = c
 
         LOG.debug("got session: %s" % (c.session_id))
@@ -264,6 +264,7 @@ class CiscoDriver(base_driver.Driver):
             # TODO(morgabra) Tell the difference between a connection error and
             # and a config error. We don't need to clear the current connection
             # for latter.
+            LOG.debug("Failed running commands: %s" % e)
             if c:
                 try:
                     c.close_session()
