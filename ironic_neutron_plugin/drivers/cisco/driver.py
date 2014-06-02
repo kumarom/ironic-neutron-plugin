@@ -20,6 +20,7 @@ This is lifted partially from the cisco ml2 mechanism.
 """
 from ironic_neutron_plugin import config
 
+from neutron.common import utils
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
@@ -220,6 +221,7 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
+    @utils.synchronized('ironic-cisco-driver')
     def _connect(self, port):
         c = self.connections.get(port.switch_host)
 
