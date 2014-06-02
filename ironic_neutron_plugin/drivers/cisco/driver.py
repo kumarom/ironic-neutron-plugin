@@ -30,7 +30,8 @@ import re
 
 LOG = logging.getLogger(__name__)
 
-# TODO(morgabra) rethink this
+# TODO(morgabra) rethink this, at the very least make this a config
+# option. We could probably change it to a global ignore list?
 IGNORE_CLEAR = [
     re.compile("no no snmp trap link-status"),
     re.compile("no spanning-tree bpduguard enable"),
@@ -43,7 +44,6 @@ class CiscoException(base_driver.DriverException):
 
 
 class CiscoDriver(base_driver.Driver):
-    """TODO(morgabra) Close sessions."""
 
     def __init__(self, dry_run=None):
         self.dry_run = dry_run
@@ -114,22 +114,16 @@ class CiscoDriver(base_driver.Driver):
         # filter comments and other unrelated data
         return [c.strip() for c in res if self._filter_interface_conf(c)]
 
-    def show(self, port, type="ethernet", session=None):
-        if not session:
-            session = self._connect(port)
-
+    def show(self, port, type="ethernet"):
         LOG.debug("Fetching interface %s" % (port.interface))
 
         eth_int = commands._make_ethernet_interface(port.interface)
         cmds = commands.show_interface_configuration(type, eth_int)
 
-        result = self._run_commands(
-            session,
-            cmds)
-
+        result = self._run_commands(port, cmds)
         return self._get_result(result)
 
-    def clear(self, port, session=None):
+    def clear(self, port):
         """Remove all configuration for a given interface, which includes
         the ethernet interface, related port-channel, and any dhcp snooping
         bindings or other port security features.
@@ -142,16 +136,13 @@ class CiscoDriver(base_driver.Driver):
 
         TODO(morgabra) port security (delete from the dhcp snooping table, etc)
         """
-        if not session:
-            session = self._connect(port)
-
         LOG.debug("clearing interface %s" % (port.interface))
 
         interface = port.interface
         portchan_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
-        eth_conf = self.show(port, type='ethernet', session=session)
+        eth_conf = self.show(port, type='ethernet')
         eth_conf = [self._negate_conf(c) for c in eth_conf]
 
         cmds = commands._delete_port_channel_interface(portchan_int)
@@ -166,15 +157,10 @@ class CiscoDriver(base_driver.Driver):
 
         cmds = [c for c in cmds if _filter_clear_commands(c)]
 
-        return self._run_commands(
-            session,
-            cmds)
+        return self._run_commands(port, cmds)
 
-    def create(self, port, session=None):
-        if not session:
-            session = self._connect(port)
-
-        self.clear(port, session=session)
+    def create(self, port):
+        self.clear(port)
 
         LOG.debug("Creating port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
@@ -189,23 +175,15 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        return self._run_commands(
-            session,
-            cmds)
+        return self._run_commands(port, cmds)
 
-    def delete(self, port, session=None):
-        if not session:
-            session = self._connect(port)
-
+    def delete(self, port):
         LOG.debug("Deleting port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
 
-        return self.clear(port, session=session)
+        return self.clear(port)
 
-    def attach(self, port, session=None):
-        if not session:
-            session = self._connect(port)
-
+    def attach(self, port):
         LOG.debug("Attaching vlan %s to interface %s"
                   % (port.vlan_id, port.interface))
 
@@ -216,14 +194,9 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        return self._run_commands(
-            session,
-            cmds)
+        return self._run_commands(port, cmds)
 
-    def detach(self, port, session=None):
-        if not session:
-            session = self._connect(port)
-
+    def detach(self, port):
         LOG.debug("Detaching vlan %s from interface %s"
                   % (port.vlan_id, port.interface))
 
@@ -234,9 +207,7 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        return self._run_commands(
-            session,
-            cmds)
+        return self._run_commands(port, cmds)
 
     def _import_ncclient(self):
         """Import the NETCONF client (ncclient) module.
@@ -248,7 +219,7 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
-    def _run_commands(self, session, commands):
+    def _run_commands(self, port, commands):
 
         if not commands:
             LOG.debug("No commands to run")
@@ -260,30 +231,19 @@ class CiscoDriver(base_driver.Driver):
             LOG.debug("Dry run is enabled, skipping")
             return None
 
-        try:
-            return session.command(commands)
-        except Exception as e:
-            raise CiscoException(e)
-
-    def _connect(self, port):
         if not self.ncclient:
             self.ncclient = self._import_ncclient()
 
         try:
             LOG.debug("starting session: %s" % (port.switch_host))
 
-            if self.dry_run:
-                return None
-            return self.ncclient.connect(
-                host=port.switch_host,
-                port=22,  # FIXME(morgabra) configurable
-                username=port.switch_username,
-                password=port.switch_password)
-        except Exception as e:
-            raise CiscoException(e)
-
-    def _close(self, session):
-        try:
-            session.close_session()
+            connect_args = {
+                "host": port.switch_host,
+                "port": 22,  #TODO(morgabra) configurable
+                "username": port.switch_username,
+                "password": port.switch_password
+            }
+            with self.ncclient.connect(**connect_args) as session:
+                return session.command(commands)
         except Exception as e:
             raise CiscoException(e)
