@@ -148,6 +148,9 @@ class CiscoDriver(base_driver.Driver):
         and manually negate each option.
 
         'no interface port-channel' works as expected.
+
+        You must remove entries from the dhcp snooping table before removing
+        the underlying port-channel otherwise it won't work.
         """
         LOG.debug("clearing interface %s" % (port.interface))
 
@@ -161,10 +164,10 @@ class CiscoDriver(base_driver.Driver):
         dhcp_conf = self.show_dhcp_snooping_configuration(port)
         dhcp_conf = [self._negate_conf(c) for c in dhcp_conf]
 
+        cmds = commands._configure() + dhcp_conf
         cmds = commands._delete_port_channel_interface(portchan_int)
         cmds = cmds + commands._configure_interface('ethernet', eth_int)
         cmds = cmds + eth_conf + ['shutdown']
-        cmds = cmds + commands._configure() + dhcp_conf
 
         def _filter_clear_commands(c):
             for r in IGNORE_CLEAR:
