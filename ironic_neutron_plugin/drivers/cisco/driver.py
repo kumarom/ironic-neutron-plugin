@@ -155,7 +155,7 @@ class CiscoDriver(base_driver.Driver):
         LOG.debug("clearing interface %s" % (port.interface))
 
         interface = port.interface
-        portchan_int = commands._make_portchannel_interface(interface)
+        po_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
         eth_conf = self.show(port, type='ethernet')
@@ -164,8 +164,9 @@ class CiscoDriver(base_driver.Driver):
         dhcp_conf = self.show_dhcp_snooping_configuration(port)
         dhcp_conf = [self._negate_conf(c) for c in dhcp_conf]
 
-        cmds = commands._configure() + dhcp_conf
-        cmds = commands._delete_port_channel_interface(portchan_int)
+        cmds = commands._configure_interface('port-channel', po_int)
+        cmds = cmds + dhcp_conf
+        cmds = cmds + commands._delete_port_channel_interface(po_int)
         cmds = cmds + commands._configure_interface('ethernet', eth_int)
         cmds = cmds + eth_conf + ['shutdown']
 
