@@ -100,13 +100,18 @@ def _add_channel_group(interface):
     ]
 
 
+def _add_ipsg():
+    return [
+        'ip verify source dhcp-snooping-vlan'
+    ]
+
+
 def _bind_ip(ip, mac_address, vlan_id, interface):
     return (
         _configure() +
         [('ip source binding %s %s vlan %s '
-         'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
+          'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
     )
-
 
 def _unbind_ip(ip, mac_address, vlan_id, interface):
     return (
@@ -135,10 +140,11 @@ def _delete_ethernet_interface(interface, trunked, vlan_id=None):
         cmd
     )
 
-
 def show_interface_configuration(type, interface):
     return ['show running interface %s %s' % (type, interface)]
 
+def show_dhcp_snooping_configuration(interface):
+    return ['show running dhcp | i port-channel%s' % (interface)]
 
 def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
 
@@ -152,10 +158,10 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             _configure_interface('port-channel', portchan_int) +
             _base_trunked_configuration(hardware_id, portchan_int, vlan_id) +
             _add_vpc(portchan_int) +
+            _add_ipsg() +
 
-            # IPSG
-            # TODO(morgabra) This should probably be configurable/toggleable
-            #_bind_ip(ip, mac_address, vlan_id, portchan_int) +
+            # add mac/ip to the dhcp snooping table
+            _bind_ip(ip, mac_address, vlan_id, portchan_int) +
 
             # ethernet
             _configure_interface('ethernet', eth_int) +
@@ -191,9 +197,10 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan add %s' % (vlan_id)]
-            # IPSG
-            #_bind_ip(ip, mac_address, vlan_id, interface)
+            ['switchport trunk allowed vlan add %s' % (vlan_id)] +
+
+            # add mac/ip to the dhcp snooping table
+            _bind_ip(ip, mac_address, vlan_id, interface)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
@@ -206,10 +213,10 @@ def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan remove %s' % (vlan_id)]
+            ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
 
-            # IPSG
-            #_unbind_ip(ip, mac_address, vlan_id, portchan_int)
+            # remove mac/ip from the dhcp snooping table
+            _unbind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
