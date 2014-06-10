@@ -111,7 +111,11 @@ class CiscoDriver(base_driver.Driver):
             raise Exception("cannot parse command response")
 
         # split the raw text by newline
-        res = res[0].text.split("\n")
+        text = res[0].text
+        if not text:
+            return []
+
+        res = text.split("\n")
 
         # filter comments and other unrelated data
         return [c.strip() for c in res if self._filter_interface_conf(c)]
