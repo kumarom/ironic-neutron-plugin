@@ -200,7 +200,7 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
             ['switchport trunk allowed vlan add %s' % (vlan_id)] +
 
             # add mac/ip to the dhcp snooping table
-            _bind_ip(ip, mac_address, vlan_id, interface)
+            _bind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
