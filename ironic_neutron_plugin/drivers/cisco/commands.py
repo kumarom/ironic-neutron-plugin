@@ -105,6 +105,15 @@ def _add_ipsg():
         'ip verify source dhcp-snooping-vlan'
     ]
 
+def _add_lldp():
+    return [
+        'lldp transmit'
+    ]
+
+def _remove_lldp():
+    return [
+        'no lldp transmit'
+    ]
 
 def _bind_ip(ip, mac_address, vlan_id, interface):
     return (
@@ -166,12 +175,19 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             # ethernet
             _configure_interface('ethernet', eth_int) +
             _base_trunked_configuration(hardware_id, eth_int, vlan_id) +
-            _add_channel_group(portchan_int)
+            _add_channel_group(portchan_int) +
+            # TODO(morgabra) We're assuming an access port allows LLDP
+            # and a trunked port does not. This is not a correct assumption
+            # in the general case.
+            # It seems overkill to include LLDP as a flag on the network
+            # object or something but I can't think of a better way.
+            _remove_lldp()
         )
     else:
         conf = (
             _configure_interface('ethernet', eth_int) +
-            _base_access_configuration(hardware_id, portchan_int, vlan_id)
+            _base_access_configuration(hardware_id, portchan_int, vlan_id) +
+            _add_lldp()
         )
 
     return conf
@@ -215,7 +231,8 @@ def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
             _configure_interface('port-channel', portchan_int) +
             ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
 
-            # remove mac/ip from the dhcp snooping table
+            # TODO(morgabra) This will fail if no binding exists, this
+            # is probably okay.
             _unbind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
