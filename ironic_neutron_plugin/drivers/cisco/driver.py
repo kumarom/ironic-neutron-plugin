@@ -231,10 +231,10 @@ class CiscoDriver(base_driver.Driver):
             LOG.debug("starting session: %s" % (port.switch_host))
             connect_args = {
                 "host": port.switch_host,
-                "port": 22,  #TODO(morgabra) configurable
+                "port": 22,  # TODO(morgabra) configurable
                 "username": port.switch_username,
                 "password": port.switch_password,
-                "timeout": 10  #TOOD(morgabra) configurable
+                "timeout": 10  # TOOD(morgabra) configurable
             }
             c = self.ncclient.connect(**connect_args)
             self.connections[port.switch_host] = c
