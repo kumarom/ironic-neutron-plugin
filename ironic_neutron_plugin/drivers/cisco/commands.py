@@ -105,15 +105,18 @@ def _add_ipsg():
         'ip verify source dhcp-snooping-vlan'
     ]
 
+
 def _add_lldp():
     return [
         'lldp transmit'
     ]
 
+
 def _remove_lldp():
     return [
         'no lldp transmit'
     ]
+
 
 def _bind_ip(ip, mac_address, vlan_id, interface):
     return (
@@ -121,6 +124,7 @@ def _bind_ip(ip, mac_address, vlan_id, interface):
         [('ip source binding %s %s vlan %s '
           'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
     )
+
 
 def _unbind_ip(ip, mac_address, vlan_id, interface):
     return (
@@ -149,11 +153,14 @@ def _delete_ethernet_interface(interface, trunked, vlan_id=None):
         cmd
     )
 
+
 def show_interface_configuration(type, interface):
     return ['show running interface %s %s' % (type, interface)]
 
+
 def show_dhcp_snooping_configuration(interface):
     return ['show running dhcp | i port-channel%s' % (interface)]
+
 
 def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
 
