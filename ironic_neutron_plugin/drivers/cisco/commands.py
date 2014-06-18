@@ -100,11 +100,29 @@ def _add_channel_group(interface):
     ]
 
 
+def _add_ipsg():
+    return [
+        'ip verify source dhcp-snooping-vlan'
+    ]
+
+
+def _add_lldp():
+    return [
+        'lldp transmit'
+    ]
+
+
+def _remove_lldp():
+    return [
+        'no lldp transmit'
+    ]
+
+
 def _bind_ip(ip, mac_address, vlan_id, interface):
     return (
         _configure() +
         [('ip source binding %s %s vlan %s '
-         'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
+          'interface port-channel%s' % (ip, mac_address, vlan_id, interface))]
     )
 
 
@@ -140,6 +158,10 @@ def show_interface_configuration(type, interface):
     return ['show running interface %s %s' % (type, interface)]
 
 
+def show_dhcp_snooping_configuration(interface):
+    return ['show running dhcp | i port-channel%s' % (interface)]
+
+
 def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
 
     portchan_int = _make_portchannel_interface(interface)
@@ -152,20 +174,27 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             _configure_interface('port-channel', portchan_int) +
             _base_trunked_configuration(hardware_id, portchan_int, vlan_id) +
             _add_vpc(portchan_int) +
+            _add_ipsg() +
 
-            # IPSG
-            # TODO(morgabra) This should probably be configurable/toggleable
-            #_bind_ip(ip, mac_address, vlan_id, portchan_int) +
+            # add mac/ip to the dhcp snooping table
+            _bind_ip(ip, mac_address, vlan_id, portchan_int) +
 
             # ethernet
             _configure_interface('ethernet', eth_int) +
             _base_trunked_configuration(hardware_id, eth_int, vlan_id) +
-            _add_channel_group(portchan_int)
+            _add_channel_group(portchan_int) +
+            # TODO(morgabra) We're assuming an access port allows LLDP
+            # and a trunked port does not. This is not a correct assumption
+            # in the general case.
+            # It seems overkill to include LLDP as a flag on the network
+            # object or something but I can't think of a better way.
+            _remove_lldp()
         )
     else:
         conf = (
             _configure_interface('ethernet', eth_int) +
-            _base_access_configuration(hardware_id, portchan_int, vlan_id)
+            _base_access_configuration(hardware_id, portchan_int, vlan_id) +
+            _add_lldp()
         )
 
     return conf
@@ -191,9 +220,10 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan add %s' % (vlan_id)]
-            # IPSG
-            #_bind_ip(ip, mac_address, vlan_id, interface)
+            ['switchport trunk allowed vlan add %s' % (vlan_id)] +
+
+            # add mac/ip to the dhcp snooping table
+            _bind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
@@ -206,10 +236,11 @@ def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan remove %s' % (vlan_id)]
+            ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
 
-            # IPSG
-            #_unbind_ip(ip, mac_address, vlan_id, portchan_int)
+            # TODO(morgabra) This will fail if no binding exists, this
+            # is probably okay.
+            _unbind_ip(ip, mac_address, vlan_id, portchan_int)
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op

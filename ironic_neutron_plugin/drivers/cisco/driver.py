@@ -111,7 +111,11 @@ class CiscoDriver(base_driver.Driver):
             raise Exception("cannot parse command response")
 
         # split the raw text by newline
-        res = res[0].text.split("\n")
+        text = res[0].text
+        if not text:
+            return []
+
+        res = text.split("\n")
 
         # filter comments and other unrelated data
         return [c.strip() for c in res if self._filter_interface_conf(c)]
@@ -121,6 +125,15 @@ class CiscoDriver(base_driver.Driver):
 
         eth_int = commands._make_ethernet_interface(port.interface)
         cmds = commands.show_interface_configuration(type, eth_int)
+
+        result = self._run_commands(port, cmds)
+        return self._get_result(result)
+
+    def show_dhcp_snooping_configuration(self, port):
+        LOG.debug("Fetching dhcp snooping entries for int %s" % port.interface)
+
+        po_int = commands._make_portchannel_interface(port.interface)
+        cmds = commands.show_dhcp_snooping_configuration(po_int)
 
         result = self._run_commands(port, cmds)
         return self._get_result(result)
@@ -136,18 +149,24 @@ class CiscoDriver(base_driver.Driver):
 
         'no interface port-channel' works as expected.
 
-        TODO(morgabra) port security (delete from the dhcp snooping table, etc)
+        You must remove entries from the dhcp snooping table before removing
+        the underlying port-channel otherwise it won't work.
         """
         LOG.debug("clearing interface %s" % (port.interface))
 
         interface = port.interface
-        portchan_int = commands._make_portchannel_interface(interface)
+        po_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
         eth_conf = self.show(port, type='ethernet')
         eth_conf = [self._negate_conf(c) for c in eth_conf]
 
-        cmds = commands._delete_port_channel_interface(portchan_int)
+        dhcp_conf = self.show_dhcp_snooping_configuration(port)
+        dhcp_conf = [self._negate_conf(c) for c in dhcp_conf]
+
+        cmds = commands._configure_interface('port-channel', po_int)
+        cmds = cmds + dhcp_conf
+        cmds = cmds + commands._delete_port_channel_interface(po_int)
         cmds = cmds + commands._configure_interface('ethernet', eth_int)
         cmds = cmds + eth_conf + ['shutdown']
 
@@ -231,10 +250,10 @@ class CiscoDriver(base_driver.Driver):
             LOG.debug("starting session: %s" % (port.switch_host))
             connect_args = {
                 "host": port.switch_host,
-                "port": 22,  #TODO(morgabra) configurable
+                "port": 22,  # TODO(morgabra) configurable
                 "username": port.switch_username,
                 "password": port.switch_password,
-                "timeout": 10  #TOOD(morgabra) configurable
+                "timeout": 10  # TOOD(morgabra) configurable
             }
             c = self.ncclient.connect(**connect_args)
             self.connections[port.switch_host] = c
