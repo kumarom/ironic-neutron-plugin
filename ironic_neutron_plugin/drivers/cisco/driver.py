@@ -228,7 +228,27 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        return self._run_commands(port, cmds)
+        self._run_commands(port, cmds)
+
+        # TODO(morgbara) this is not ideal, but we don't want
+        # to fail an vlan removal if the ip binding doesn't exist,
+        # and there really isn't a way to do this safely without
+        # checking for it (which takes time). This will be a little
+        # better when we differenciate between types of failures when
+        # talking to a switch better.
+        cmds = commands.unbind_ip(
+            interface=port.interface,
+            vlan_id=port.vlan_id,
+            ip=port.ip,
+            mac_address=port.mac_address,
+            trunked=port.trunked
+            )
+
+        try:
+            return self._run_commands(port, cmds)
+        except CiscoException as e:
+            LOG.info("Failed to remove ip binding: %s" % str(e))
+            return None
 
     def _import_ncclient(self):
         """Import the NETCONF client (ncclient) module.
