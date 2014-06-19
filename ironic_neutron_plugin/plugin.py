@@ -16,8 +16,10 @@
 
 from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.drivers import manager
+from ironic_neutron_plugin import extensions
 from ironic_neutron_plugin.extensions import switch
 
+from neutron.api import extensions as neutron_extensions
 from neutron.api.v2 import attributes
 from neutron.common import constants as const
 from neutron.common import exceptions as exc
@@ -77,6 +79,10 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         attributes.PORTS, ['_find_port_dict_extensions'])
     db_base_plugin_v2.NeutronDbPluginV2.register_dict_extend_funcs(
         attributes.PORT, ['_find_port_dict_extensions'])
+
+    def __init__(self, *args, **kwargs):
+        super(IronicMl2Plugin, self).__init__(*args, **kwargs)
+        neutron_extensions.append_api_extensions_path(extensions.__path__)
 
     def _get_port_attr(self, port, key):
         if "port" not in port:
