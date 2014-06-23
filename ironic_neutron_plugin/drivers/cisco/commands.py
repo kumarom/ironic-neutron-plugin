@@ -161,6 +161,18 @@ def show_interface_configuration(type, interface):
 def show_dhcp_snooping_configuration(interface):
     return ['show running dhcp | i port-channel%s' % (interface)]
 
+def unbind_ip(interface, vlan_id, ip, mac_address, trunked):
+    portchan_int = _make_portchannel_interface(interface)
+
+    if trunked:
+        return (
+            # port-channel
+            _configure_interface('port-channel', portchan_int) +
+            # This will fail if no binding exists
+            _unbind_ip(ip, mac_address, vlan_id, portchan_int)
+        )
+    else:
+        return []  # TODO(morgabra) throw? This is a no-op
 
 def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
 
@@ -236,11 +248,7 @@ def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
         return (
             # port-channel
             _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan remove %s' % (vlan_id)] +
-
-            # TODO(morgabra) This will fail if no binding exists, this
-            # is probably okay.
-            _unbind_ip(ip, mac_address, vlan_id, portchan_int)
+            ['switchport trunk allowed vlan remove %s' % (vlan_id)]
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
