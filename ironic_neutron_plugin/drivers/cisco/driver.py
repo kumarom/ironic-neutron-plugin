@@ -35,6 +35,7 @@ LOG = logging.getLogger(__name__)
 # option. We could probably change it to a global ignore list?
 IGNORE_CLEAR = [
     re.compile("no no snmp trap link-status"),
+    re.compile("no no lldp transmit"),
     re.compile("no spanning-tree bpduguard enable"),
     re.compile("no channel-group \d+ mode active")
 ]
