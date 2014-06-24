@@ -263,6 +263,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         attrs = port['port']
         need_port_update_notify = False
 
+        LOG.info('Attempting port update %s: %s' % (id, port))
+
         session = context.session
         changed_fixed_ips = 'fixed_ips' in port['port']
         with session.begin(subtransactions=True):
@@ -403,13 +405,13 @@ class IronicMechanismDriver(api.MechanismDriver):
         network = context.network.current
         current = context.current
 
-        if not current["switch:ports"]:
-            msg = "cannot update port, no switchports found"
-            raise exc.InvalidInput(error_message=msg)
-
-        LOG.info(("delete_port_postcommit() for port "
-                  "%s, dettaching" % current["id"]))
-        self.driver_manager.detach(current, network)
+        if current["switch:ports"]:
+            LOG.info(("delete_port_postcommit() for port "
+                      "%s, dettaching" % current["id"]))
+            self.driver_manager.detach(current, network)
+        else:
+            LOG.info(("delete_port_postcommit() for port %s, no switchports "
+                      "found - skipping detach" % current["id"]))
 
     def bind_port(self, context):
         pass
