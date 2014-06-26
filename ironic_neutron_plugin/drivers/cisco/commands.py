@@ -106,6 +106,12 @@ def _add_ipsg():
     ]
 
 
+def _remove_ipsg():
+    return [
+        'no ip verify source dhcp-snooping-vlan'
+    ]
+
+
 def _add_lldp():
     return [
         'lldp transmit'
@@ -206,7 +212,11 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
         conf = (
             _configure_interface('ethernet', eth_int) +
             _base_access_configuration(hardware_id, portchan_int, vlan_id) +
-            _add_lldp()
+            _add_lldp() +
+            # If this interface belonged to a portchannel that has IPSG
+            # enabled and you drop the portchannel, the IPSG still sticks.
+            _add_ipsg() +
+            _remove_ipsg()
         )
 
     return conf
