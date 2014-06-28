@@ -29,6 +29,9 @@ ironic_opts = [
                default=2,
                help="Seconds to wait between retrying commands due to auth "
                     "failure"),
+    cfg.BoolOpt("use_port_security",
+                default=True,
+                help="Enable use of port security commands (true/false)."),
 ]
 
 cfg.CONF.register_opts(ironic_opts, "ironic")

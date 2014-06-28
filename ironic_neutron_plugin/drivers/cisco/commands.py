@@ -15,6 +15,10 @@
 
 import re
 
+from ironic_neutron_plugin import config
+
+CONF = config.cfg.CONF
+
 
 def _configure():
     return ['configure terminal']
@@ -101,12 +105,16 @@ def _add_channel_group(interface):
 
 
 def _add_ipsg():
+    if not CONF.ironic.use_port_security:
+        return []
     return [
         'ip verify source dhcp-snooping-vlan'
     ]
 
 
 def _remove_ipsg():
+    if not CONF.ironic.use_port_security:
+        return []
     return [
         'no ip verify source dhcp-snooping-vlan'
     ]
@@ -167,6 +175,7 @@ def show_interface_configuration(type, interface):
 def show_dhcp_snooping_configuration(interface):
     return ['show running dhcp | i port-channel%s' % (interface)]
 
+
 def unbind_ip(interface, vlan_id, ip, mac_address, trunked):
     portchan_int = _make_portchannel_interface(interface)
 
@@ -179,6 +188,7 @@ def unbind_ip(interface, vlan_id, ip, mac_address, trunked):
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op
+
 
 def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
 
