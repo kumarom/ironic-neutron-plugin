@@ -28,6 +28,7 @@ from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
 
 import re
+import time
 
 LOG = logging.getLogger(__name__)
 
@@ -283,7 +284,7 @@ class CiscoDriver(base_driver.Driver):
 
         return c
 
-    def _run_commands(self, port, commands):
+    def _run_commands_inner(self, port, commands):
 
         if not commands:
             LOG.debug("No commands to run")
@@ -315,3 +316,19 @@ class CiscoDriver(base_driver.Driver):
                 self.connections[port.switch_host] = None
 
             raise CiscoException(e)
+
+    def _run_commands(self, port, commands):
+        num_tries = 0
+        max_tries = 1 + config.cfg.CONF.ironic.auth_failure_retries
+        sleep_time = config.cfg.CONF.ironic.auth_failure_retry_interval
+        while True:
+            num_tries += 1
+            try:
+                return self._run_commands_inner(port, commands)
+            except CiscoException as err:
+                if ('authorization failed' not in str(err) or
+                        num_tries == max_tries):
+                    raise
+                LOG.warning("Received authorization failure, will retry: "
+                            "%s" % err)
+            time.sleep(sleep_time)

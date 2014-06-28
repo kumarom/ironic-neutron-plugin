@@ -21,7 +21,14 @@ ironic_opts = [
                 help="Log only, but exersize the mechanism."),
     cfg.StrOpt("credential_secret",
                help=("Secret AES key for encrypting switch credentials "
-                     " in the datastore."))
+                     " in the datastore.")),
+    cfg.IntOpt("auth_failure_retries",
+               default=5,
+               help="Number of times to retry commands due to auth failure"),
+    cfg.IntOpt("auth_failure_retry_interval",
+               default=2,
+               help="Seconds to wait between retrying commands due to auth "
+                    "failure"),
 ]
 
 cfg.CONF.register_opts(ironic_opts, "ironic")
