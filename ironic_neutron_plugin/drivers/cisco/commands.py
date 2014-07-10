@@ -173,7 +173,7 @@ def show_interface_configuration(type, interface):
 
 
 def show_dhcp_snooping_configuration(interface):
-    return ['show running dhcp | i port-channel%s' % (interface)]
+    return ['show running dhcp | egrep port-channel%s$' % (interface)]
 
 
 def unbind_ip(interface, vlan_id, ip, mac_address, trunked):
