@@ -244,7 +244,7 @@ class CiscoDriver(base_driver.Driver):
             ip=port.ip,
             mac_address=port.mac_address,
             trunked=port.trunked
-            )
+        )
 
         try:
             return self._run_commands(port, cmds)

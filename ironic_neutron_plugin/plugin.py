@@ -98,6 +98,10 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         """Looks up extension data and updates port_res."""
         if not port_ext:
             port_ext = db.get_port_ext(port_res["id"], session=session)
+            if not port_ext:
+                LOG.error("Port %s does not have extension data"
+                          % port_db["id"])
+                return
             port_ext = port_ext.as_dict()
 
         if not switchports:
@@ -202,8 +206,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                        "port %s" % (bound_port_id))
                 raise exc.InvalidInput(error_message=msg)
 
-    def _delete_port_ext(self, port_id):
-        db.delete_port_ext(port_id)
+    def _delete_port_ext(self, port_id, session=None):
+        db.delete_port_ext(port_id, session)
 
     def create_port(self, context, port):
         do_commit = False
@@ -341,8 +345,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
 
     def delete_port(self, context, id, l3_port_check=True):
         super(IronicMl2Plugin, self).delete_port(
-            context, id, l3_port_check=True)
-        self._delete_port_ext(id)
+            context, id, l3_port_check=l3_port_check)
+        self._delete_port_ext(id, session=context.session)
 
     def get_ports(self, context, filters=None, fields=None,
                   sorts=None, limit=None, marker=None,
@@ -351,7 +355,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         # We want to allow filtering by the hardware_id extension field.
         if 'switch:hardware_id' in filters and filters['switch:hardware_id']:
             ports = db.filter_port_ext(
-                hardware_id=filters['switch:hardware_id'])
+                hardware_id=filters['switch:hardware_id'],
+                session=context.session)
             port_ids = [p.port_id for p in ports]
 
             # no ports match that hardware_id, so we can bail early
