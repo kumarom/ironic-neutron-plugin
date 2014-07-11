@@ -163,7 +163,7 @@ class CiscoDriver(base_driver.Driver):
         eth_conf = self.show(port, type='ethernet')
         eth_conf = [self._negate_conf(c) for c in eth_conf]
 
-        dhcp_conf = self.show_dhcp_snooping_configuration(po_int)
+        dhcp_conf = self.show_dhcp_snooping_configuration(port)
         dhcp_conf = [self._negate_conf(c) for c in dhcp_conf]
 
         cmds = commands._configure_interface('port-channel', po_int)
