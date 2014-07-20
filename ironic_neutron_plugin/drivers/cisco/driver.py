@@ -312,8 +312,9 @@ class CiscoDriver(base_driver.Driver):
             if c:
                 try:
                     c.close_session()
-                except Exception as e:
-                    LOG.debug("Failed closing session: %s" % c.session_id)
+                except Exception as err:
+                    LOG.debug("Failed closing session %(sess)s: %(e)s",
+                              {'sess': c.session_id, 'e': err})
                 self.connections[port.switch_host] = None
 
             raise CiscoException(e)
@@ -322,14 +323,23 @@ class CiscoDriver(base_driver.Driver):
         num_tries = 0
         max_tries = 1 + config.cfg.CONF.ironic.auth_failure_retries
         sleep_time = config.cfg.CONF.ironic.auth_failure_retry_interval
+
+        retryable_errors = ['authorization failed',
+                            'Permission denied',
+                            'Not connected to NETCONF server']
+
+        def retryable_error(err):
+            for retry_err in retryable_errors:
+                if retry_err in err:
+                    return True
+            return False
+
         while True:
             num_tries += 1
             try:
                 return self._run_commands_inner(port, commands)
             except CiscoException as err:
-                if ('authorization failed' not in str(err) or
-                        num_tries == max_tries):
+                if (num_tries == max_tries or not retryable_error(str(err))):
                     raise
-                LOG.warning("Received authorization failure, will retry: "
-                            "%s" % err)
+                LOG.warning("Received retryable failure: %s" % err)
             time.sleep(sleep_time)
