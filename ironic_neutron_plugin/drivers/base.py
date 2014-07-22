@@ -35,6 +35,13 @@ class Driver(object):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def interface_status(self, port_info):
+        """Fetch and return relevant status information
+        from the device.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def create(self, port_info):
         """Create base configuration for a previously unconfigured
         port. This will be called in place of attach() the first
@@ -82,6 +89,9 @@ class PortInfo(object):
 
 
 class DummyDriver(Driver):
+
+    def interface_status(self, port_info):
+        pass
 
     def running_config(self, port_info):
         pass
