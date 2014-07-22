@@ -155,8 +155,8 @@ def _delete_port_channel_interface(interface):
 def _delete_ethernet_interface(interface):
     return (
         _configure_interface('ethernet', interface) +
-        _default_interface('ethernet', interface) +
-        ['shutdown']
+        ['shutdown'] +
+        _default_interface('ethernet', interface)
     )
 
 
