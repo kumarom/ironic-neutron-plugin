@@ -13,59 +13,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import mock
 
-import os
-
 from neutron import context
-from neutron.openstack.common import log as logging
-from neutron.plugins.common import constants as p_const
 from neutron.plugins.ml2 import config as ml2_config
-from neutron.plugins.ml2 import driver_api as api
-from neutron.plugins.ml2 import driver_context
-from neutron.plugins.ml2.drivers import type_vlan as vlan_config
 from neutron.tests.unit import test_db_plugin
 
 from ironic_neutron_plugin import config as ironic_config
+from ironic_neutron_plugin.drivers import manager
 from ironic_neutron_plugin.extensions import switch as switch_extension
+from ironic_neutron_plugin import plugin
+
+import webob
 
 
-LOG = logging.getLogger(__name__)
+ml2_config.cfg.CONF.import_opt('network_vlan_ranges',
+                               'neutron.plugins.ml2.drivers.type_vlan',
+                               group='ml2_type_vlan')
+
 ML2_PLUGIN = 'ironic_neutron_plugin.plugin.IronicMl2Plugin'
-PHYS_NET = 'physnet1'
-COMP_HOST_NAME = 'testhost'
-COMP_HOST_NAME_2 = 'testhost_2'
-VLAN_START = 1000
-VLAN_END = 1100
-NEXUS_IP_ADDR = '1.1.1.1'
-NETWORK_NAME = 'test_network'
-NETWORK_NAME_2 = 'test_network_2'
-NEXUS_INTERFACE = '1/1'
-NEXUS_INTERFACE_2 = '1/2'
-CIDR_1 = '10.0.0.0/24'
-CIDR_2 = '10.0.1.0/24'
-DEVICE_ID_1 = '11111111-1111-1111-1111-111111111111'
-DEVICE_ID_2 = '22222222-2222-2222-2222-222222222222'
-DEVICE_OWNER = 'compute:None'
-BOUND_SEGMENT1 = {api.NETWORK_TYPE: p_const.TYPE_VLAN,
-                  api.PHYSICAL_NETWORK: PHYS_NET,
-                  api.SEGMENTATION_ID: VLAN_START}
-BOUND_SEGMENT2 = {api.NETWORK_TYPE: p_const.TYPE_VLAN,
-                  api.PHYSICAL_NETWORK: PHYS_NET,
-                  api.SEGMENTATION_ID: VLAN_START + 1}
+
+
+def optional_ctx(obj, fallback):
+
+    @contextlib.contextmanager
+    def context_wrapper(val):
+        yield val
+
+    if obj:
+        return context_wrapper(obj)
+    else:
+        return fallback()
 
 
 class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
 
+    fmt = 'json'
+    _plugin_name = ML2_PLUGIN
+    _mechanism_drivers = ['ironic']
+
+    # automatically create fixtures (net1, net2, subnet1, etc)
+    _dummy_data = False
+
     def setUp(self):
-
-        self.fmt = 'json'
-
-        extensions_path = os.path.dirname(os.path.realpath(__file__))
-        ironic_config.cfg.CONF.set_override(
-            'api_extensions_path',
-            os.path.join(extensions_path, '../extensions')
-        )
 
         ironic_config.cfg.CONF.set_override(
             'credential_secret',
@@ -73,39 +64,111 @@ class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
             group='ironic'
         )
 
-        ml2_opts = {
-            'mechanism_drivers': ['ironic'],
-            'tenant_network_types': ['vlan'],
-            'type_drivers': ['vlan']
-        }
-        for opt, val in ml2_opts.items():
-                ml2_config.cfg.CONF.set_override(opt, val, 'ml2')
+        ml2_config.cfg.CONF.set_override('mechanism_drivers',
+                                         self._mechanism_drivers,
+                                         group='ml2')
+        ml2_config.cfg.CONF.set_override('tenant_network_types',
+                                         ['vlan'],
+                                         group='ml2')
 
-        # Configure the ML2 VLAN parameters
-        phys_vrange = ':'.join([PHYS_NET, str(VLAN_START), str(VLAN_END)])
-        vlan_config.cfg.CONF.set_override('network_vlan_ranges',
-                                          [phys_vrange],
-                                          'ml2_type_vlan')
+        self.physnet = 'physnet1'
+        self.vlan_range = '1:100'
+        self.phys_vrange = ':'.join([self.physnet, self.vlan_range])
+        ml2_config.cfg.CONF.set_override(
+            'network_vlan_ranges',
+            [self.phys_vrange],
+            group='ml2_type_vlan'
+        )
 
-        # Mock port context values for bound_segments and 'status'.
-        self.mock_bound_segment = mock.patch.object(
-            driver_context.PortContext,
-            'bound_segment',
-            new_callable=mock.PropertyMock).start()
-        self.mock_bound_segment.return_value = BOUND_SEGMENT1
-
-        self.mock_original_bound_segment = mock.patch.object(
-            driver_context.PortContext,
-            'original_bound_segment',
-            new_callable=mock.PropertyMock).start()
-        self.mock_original_bound_segment.return_value = None
+        # Mock the hardware driver calls
+        self.hw_driver = mock.Mock()
+        mock.patch.object(manager.DriverManager,
+                          '_get_driver',
+                          return_value=self.hw_driver).start()
 
         ext_mgr = switch_extension.Switch()
         super(IronicMl2MechanismTestCase, self).setUp(
-            'ironic_neutron_plugin.plugin.IronicMl2Plugin',
-            ext_mgr=ext_mgr)
+            self._plugin_name, ext_mgr=ext_mgr)
 
         self.port_create_status = 'DOWN'
+        self.driver = plugin.IronicMl2Plugin()
+        self.context = context.get_admin_context()
+
+        if self._dummy_data:
+            self._make_dummy_data()
+
+    def _make_dummy_data(self):
+        self.net1 = self._make_network(
+            self.fmt, 'net1', True)
+        self.net2 = self._make_network(
+            self.fmt, 'net2', True)
+
+        self.subnet1 = self._make_subnet(
+            self.fmt, self.net1,
+            '10.0.100.1', '10.0.100.0/24')
+        self.subnet2 = self._make_subnet(
+            self.fmt, self.net2,
+            '10.0.200.1', '10.0.200.0/24')
+
+        self.switch1 = self._make_switch(
+            self.fmt, 'switch1', 'switch1.switch.com')
+        self.switch2 = self._make_switch(
+            self.fmt, 'switch2', 'switch2.switch.com')
+
+        # massage our network a bit to look like a real response
+        self.net1['network']['subnets'] = [self.subnet1['subnet']['id']]
+        self.net1['network']['router:external'] = False
+        self.net2['network']['subnets'] = [self.subnet2['subnet']['id']]
+        self.net2['network']['router:external'] = False
+
+        self.hardware_id = 'hardware1'
+
+    def assertContains(self, d1, d2):
+        """ensure all the keys in d1 are in and equal to d2."""
+        for k, v in d1.items():
+            self.assertTrue(k in d2)
+            self.assertEqual(v, d2[k])
+        return True
+
+    def assertHWDriverNotCalled(self, exclude=None):
+        if not exclude:
+            exclude = []
+
+        for op in ['create', 'attach', 'delete', 'detach']:
+            if op in exclude:
+                continue
+            self.assertEqual(getattr(self.hw_driver, op).call_count, 0)
+
+    def _make_switchport_req(self, swp):
+        return {
+            'switch_id': swp['switch_id'],
+            'port': swp['port'],
+            'name': swp['name']
+        }
+
+    def _make_port_with_switchports(self, network, commit=False,
+                                    trunked=False, switchports=None,
+                                    expected_status_code=201):
+        ports = []
+        if switchports:
+            for swp in switchports['switchports']:
+                ports.append(self._make_switchport_req(swp))
+
+        res = self._create_port(
+            self.fmt,
+            network,
+            context=self.context,
+            arg_list=('trunked', 'commit',
+                      'switch:ports', 'switch:hardware_id'),
+            **{
+                'trunked': trunked,
+                'commit': commit,
+                'switch:ports': ports,
+                'switch:hardware_id': self.hardware_id
+            }
+        )
+        self.assertEqual(res.status_code, expected_status_code)
+        return self.deserialize(self.fmt, res)
 
     def _create_switch(self, fmt, id, host, arg_list=None, **kwargs):
 
@@ -128,23 +191,73 @@ class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
         switch_res = switch_req.get_response(self.ext_api)
         return switch_res
 
-    def _create_switchport(self, fmt, switch_id, hardware_id, port, name,
-                           arg_list=None, **kwargs):
+    def _make_switch(self, fmt, id, host, **kwargs):
+        res = self._create_switch(fmt, id, host, **kwargs)
 
-        data = {'switchport': {'switch_id': switch_id,
-                               'hardware_id': hardware_id,
-                               'port': port,
-                               'name': name}}
+        if res.status_int >= webob.exc.HTTPClientError.code:
+            raise webob.exc.HTTPClientError(code=res.status_int)
+        return self.deserialize(fmt, res)
+
+    def _create_switchports(self, fmt, switches, hardware_id, ports, names,
+                            arg_list=None, **kwargs):
+
+        data = []
+
+        for i, switch in enumerate(switches):
+            data.append({
+                'switch_id': switch['switch']['id'],
+                'hardware_id': hardware_id,
+                'port': ports[i],
+                'name': names[i]
+            })
+
+        data = {"switchports": data}
 
         for arg in (arg_list or ()):
             # Arg must be present
             if arg in kwargs:
                 data['switchport'][arg] = kwargs[arg]
-        switchport_req = self.new_create_request('switchports', data, fmt)
+        switchports_req = self.new_create_request('switchports', data, fmt)
         if (kwargs.get('set_context') and 'tenant_id' in kwargs):
             # create a specific auth context for this request
-            switchport_req.environ['neutron.context'] = context.Context(
+            switchports_req.environ['neutron.context'] = context.Context(
                 '', kwargs['tenant_id'])
 
-        switchport_res = switchport_req.get_response(self.ext_api)
-        return switchport_res
+        switchports_res = switchports_req.get_response(self.ext_api)
+        return switchports_res
+
+    def _make_switchports(self, fmt, switches, hardware_id, ports, names,
+                          **kwargs):
+        res = self._create_switchports(fmt, switches, hardware_id,
+                                       ports, names, **kwargs)
+
+        if res.status_int >= webob.exc.HTTPClientError.code:
+            raise webob.exc.HTTPClientError(code=res.status_int)
+        return self.deserialize(fmt, res)
+
+    @contextlib.contextmanager
+    def switch(self, id='switch1', host='switch1.net', do_delete=True,
+               **kwargs):
+        switch = self._make_switch(self.fmt, id, host, **kwargs)
+        yield switch
+        if do_delete:
+            self._delete('switches', switch['switch']['id'])
+
+    @contextlib.contextmanager
+    def switchports(self, hardware_id='hardware1', switches=None,
+                    ports=['eth1/1'], names=['eth0'], do_delete=True,
+                    **kwargs):
+        with optional_ctx(switches, self.switch) as switches:
+
+            if isinstance(switches, dict):
+                switches = [switches]
+
+            switchports = self._make_switchports(
+                self.fmt,
+                [s['switch']['id'] for s in switches],
+                hardware_id,
+                ports,
+                names, **kwargs)
+            yield switchports
+            if do_delete:
+                self._delete('switchports', hardware_id)

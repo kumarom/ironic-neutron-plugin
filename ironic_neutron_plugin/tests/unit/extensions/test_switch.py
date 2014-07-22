@@ -59,11 +59,10 @@ class TestSwitches(base.IronicMl2MechanismTestCase):
         switch = ironic_db.get_switch(switch_id)
         self.assertEqual(switch, None)
 
-    def test_delete_cascade_delete_switchports(self):
-        pass
-
 
 class TestSwitchPorts(base.IronicMl2MechanismTestCase):
+
+    _dummy_data = True
 
     def setUp(self):
         super(TestSwitchPorts, self).setUp()
@@ -78,3 +77,34 @@ class TestSwitchPorts(base.IronicMl2MechanismTestCase):
         res = req.get_response(self.ext_api)
 
         self.assertEqual(res.status_int, webob.exc.HTTPNotFound.code)
+
+    def test_get(self):
+        switchports = self._make_switchports(
+            self.fmt, [self.switch1, self.switch2],
+            self.hardware_id, ['eth1/1', 'eth1/1'], ['eth0', 'eth1']
+        )
+
+        req = self.new_show_request('switchports', self.hardware_id)
+        res = self.deserialize(self.fmt, req.get_response(self.ext_api))
+
+        self.assertEqual(switchports, res)
+
+    def test_create(self):
+        switchports = self._make_switchports(
+            self.fmt, [self.switch1, self.switch2],
+            self.hardware_id, ['eth1/1', 'eth1/1'], ['eth0', 'eth1']
+        )
+
+        self.assertEqual(len(switchports['switchports']), 2)
+
+    def test_delete(self):
+        switchports = self._make_switchports(
+            self.fmt, [self.switch1, self.switch2],
+            self.hardware_id, ['eth1/1', 'eth1/1'], ['eth0', 'eth1']
+        )
+
+        self._delete('switchports', self.hardware_id)
+
+        switchports = ironic_db.filter_switchports(
+            hardware_id=self.hardware_id)
+        self.assertEqual(list(switchports), [])

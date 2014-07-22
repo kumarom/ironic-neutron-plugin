@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 
 from ironic_neutron_plugin.db import db
 from ironic_neutron_plugin.drivers import manager
@@ -24,17 +25,16 @@ from neutron.api.v2 import attributes
 from neutron.common import constants as const
 from neutron.common import exceptions as exc
 from neutron.db import db_base_plugin_v2
-from neutron.db import models_v2
 from neutron.extensions import allowedaddresspairs as addr_pair
 from neutron.extensions import extra_dhcp_opt as edo_ext
 from neutron.openstack.common import excutils
+from neutron.openstack.common import lockutils
 from neutron.openstack.common import log as logging
 from neutron.plugins.ml2.common import exceptions as ml2_exc
+from neutron.plugins.ml2 import db as ml2_db
 from neutron.plugins.ml2 import driver_api as api
 from neutron.plugins.ml2 import driver_context
 from neutron.plugins.ml2 import plugin
-
-from sqlalchemy.orm import exc as sa_exc
 
 LOG = logging.getLogger(__name__)
 
@@ -44,30 +44,6 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         1) physical switch credential management/port mappings
         2) "commit" flag on the port object
         3) "trunked" flag on the port object
-
-    A subclass would not be necessary if:
-        1) You could load extensions from a mechanism/config file/something
-        2) The mech_context contained the request body
-           (for extension field processing)
-
-    TODO(morgabra) Some of this stuff might make it upstream with some
-    attention (physical portmaps?), but other stuff might be a harder sell.
-    ("commit" flag)
-
-    TODO(morgabra) Currently there's an additional driver abstraction layer
-    for the mechanism, which should probably be split out in leu of different
-    mechanisms that check switch:port["type"]?
-
-    TODO(morgabra) It seems like we should use the portbinding extension
-    in some capacity, I don't understand it.
-
-    TODO(morgabra) Does "trunked" belong on the port or network?
-
-    TODO(morgabra) "commit" is a strange feature, separating the neturon
-    data model from the actual network configuration. This was a result
-    of nova creating ports for the ironic virt driver before we were ready
-    to realize that configuration on the switch. I'm not sure it's a great
-    idea and maybe changing nova behavior would be better? (Pushing the port)
     """
 
     _supported_extension_aliases = (
@@ -85,9 +61,6 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         neutron_extensions.append_api_extensions_path(extensions.__path__)
 
     def _get_port_attr(self, port, key):
-        if "port" not in port:
-            port = {"port": port}
-
         val = port["port"].get(key)
         if val == attributes.ATTR_NOT_SPECIFIED:
             val = None
@@ -185,7 +158,7 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         if switchport_ids:
             # Fetch all existing networks we are attached to.
             portbindings = db.filter_switchport_bindings_by_switch_port_ids(
-                switchport_ids)
+                switchport_ids, session=session)
             portbindings = list(portbindings)
             bound_port_ids = set([pb.port_id for pb in portbindings])
 
@@ -197,10 +170,9 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             raise exc.InvalidInput(error_message=msg)
 
         for bound_port_id in bound_port_ids:
-
             # We can't attach a trunked network if we are already attached
             # to a non-trunked network.
-            port_ext = db.get_port_ext(bound_port_id)
+            port_ext = db.get_port_ext(bound_port_id, session=session)
             if not port_ext.trunked:
                 msg = ("Already attached via non-trunked "
                        "port %s" % (bound_port_id))
@@ -221,6 +193,9 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             sgids = self._get_security_groups_on_port(context, port)
             dhcp_opts = port['port'].get(edo_ext.EXTRADHCPOPTS, [])
             result = super(plugin.Ml2Plugin, self).create_port(context, port)
+            self._process_port_create_security_group(context, result, sgids)
+            network = self.get_network(context, result['network_id'])
+            binding = ml2_db.add_port_binding(session, result['id'])
 
             # Process extension data
             port_ext = self._create_port_ext(
@@ -228,7 +203,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
             switchports = self._update_switchports(
                 result, port, session=session)
             self._find_port_dict_extensions(
-                result, None, port_ext=port_ext, switchports=switchports)
+                result, None, port_ext=port_ext,
+                switchports=switchports, session=session)
 
             # Validate we can actually configure this port
             if result["commit"]:
@@ -236,10 +212,8 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                 self._validate_port_can_commit(
                     result, None, session=session)
 
-            self._process_port_create_security_group(context, result, sgids)
-            network = self.get_network(context, result['network_id'])
             mech_context = driver_context.PortContext(self, context, result,
-                                                      network)
+                                                      network, binding)
             self._process_port_binding(mech_context, attrs)
             result[addr_pair.ADDRESS_PAIRS] = (
                 self._process_create_allowed_address_pairs(
@@ -247,7 +221,6 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                     attrs.get(addr_pair.ADDRESS_PAIRS)))
             self._process_port_create_extra_dhcp_opts(context, result,
                                                       dhcp_opts)
-
             self.mechanism_manager.create_port_precommit(mech_context)
 
         try:
@@ -258,8 +231,19 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                 LOG.error(("mechanism_manager.create_port_postcommit "
                            "failed, deleting port '%s'"), result['id'])
                 self.delete_port(context, result['id'])
+
+        # REVISIT(rkukura): Is there any point in calling this before
+        # a binding has been succesfully established?
         self.notify_security_groups_member_updated(context, result)
-        return result
+
+        try:
+            bound_context = self._bind_port_if_needed(mech_context)
+        except ml2_exc.MechanismDriverError:
+            with excutils.save_and_reraise_exception():
+                LOG.error(("_bind_port_if_needed "
+                           "failed, deleting port '%s'"), result['id'])
+                self.delete_port(context, result['id'])
+        return bound_context._port
 
     def update_port(self, context, id, port):
         do_commit = False
@@ -270,17 +254,19 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         LOG.info('Attempting port update %s: %s' % (id, port))
 
         session = context.session
-        changed_fixed_ips = 'fixed_ips' in port['port']
-        with session.begin(subtransactions=True):
-            try:
-                port_db = (session.query(models_v2.Port).
-                           enable_eagerloads(False).
-                           filter_by(id=id).with_lockmode('update').one())
-            except sa_exc.NoResultFound:
+
+        # REVISIT: Serialize this operation with a semaphore to
+        # prevent deadlock waiting to acquire a DB lock held by
+        # another thread in the same process, leading to 'lock wait
+        # timeout' errors.
+        with contextlib.nested(lockutils.lock('db-access'),
+                               session.begin(subtransactions=True)):
+            port_db, binding = ml2_db.get_locked_port_and_binding(session, id)
+            if not port_db:
                 raise exc.PortNotFound(port_id=id)
 
-            # Process extension data
             original_port = self._make_port_dict(port_db)
+            # Process extension data
             self._find_port_dict_extensions(
                 original_port, None, session=session)
 
@@ -309,20 +295,16 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
                     self.update_address_pairs_on_port(context, id, port,
                                                       original_port,
                                                       updated_port))
-            elif changed_fixed_ips:
-                self._check_fixed_ips_and_address_pairs_no_overlap(
-                    context, updated_port)
             need_port_update_notify |= self.update_security_group_on_port(
                 context, id, port, original_port, updated_port)
             network = self.get_network(context, original_port['network_id'])
             need_port_update_notify |= self._update_extra_dhcp_opts_on_port(
                 context, id, port, updated_port)
             mech_context = driver_context.PortContext(
-                self, context, updated_port, network,
+                self, context, updated_port, network, binding,
                 original_port=original_port)
             need_port_update_notify |= self._process_port_binding(
                 mech_context, attrs)
-
             self.mechanism_manager.update_port_precommit(mech_context)
 
         # TODO(apech) - handle errors raised by update_port, potentially
@@ -341,7 +323,11 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
         if need_port_update_notify:
             self._notify_port_updated(mech_context)
 
-        return updated_port
+        bound_port = self._bind_port_if_needed(
+            mech_context,
+            allow_notify=True,
+            need_notify=need_port_update_notify)
+        return bound_port._port
 
     def delete_port(self, context, id, l3_port_check=True):
         super(IronicMl2Plugin, self).delete_port(
@@ -373,12 +359,11 @@ class IronicMl2Plugin(plugin.Ml2Plugin):
 class IronicMechanismDriver(api.MechanismDriver):
 
     def initialize(self):
-        self.driver_manager = manager.DriverManager()
+        self._driver_manager = manager.DriverManager()
         LOG.info("IronicMechanismDriver initialized.")
 
-    def create_network_postcommit(self, context):
-        # TODO(morgabra) Actually provision vlan
-        pass
+    def get_driver_manager(self):
+        return self._driver_manager
 
     def create_port_postcommit(self, context):
         network = context.network.current
@@ -386,7 +371,7 @@ class IronicMechanismDriver(api.MechanismDriver):
 
         LOG.info(("create_port_postcommit() commit=True "
                   "for port %s, attaching" % current["id"]))
-        self.driver_manager.attach(current, network)
+        self.get_driver_manager().attach(current, network)
 
     def update_port_postcommit(self, context):
         """TODO(morgabra) Failures here do *not* reset the database state :(
@@ -400,11 +385,11 @@ class IronicMechanismDriver(api.MechanismDriver):
         if original["commit"] and not current["commit"]:
             LOG.info(("update_port_postcommit() commit=True -> commit=False "
                       "for port %s, detaching" % current["id"]))
-            self.driver_manager.detach(current, network)
+            self.get_driver_manager().detach(current, network)
         else:
             LOG.info(("update_port_postcommit() commit=False -> commit=True "
                       "for port %s, attaching" % current["id"]))
-            self.driver_manager.attach(current, network)
+            self.get_driver_manager().attach(current, network)
 
     def delete_port_postcommit(self, context):
         network = context.network.current
@@ -413,10 +398,7 @@ class IronicMechanismDriver(api.MechanismDriver):
         if current["switch:ports"]:
             LOG.info(("delete_port_postcommit() for port "
                       "%s, dettaching" % current["id"]))
-            self.driver_manager.detach(current, network)
+            self.get_driver_manager().detach(current, network)
         else:
             LOG.info(("delete_port_postcommit() for port %s, no switchports "
                       "found - skipping detach" % current["id"]))
-
-    def bind_port(self, context):
-        pass

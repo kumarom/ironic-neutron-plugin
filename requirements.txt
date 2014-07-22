@@ -1,11 +1,11 @@
 pbr>=0.6,!=0.7,<1.0
 
 # latest neutronclient
--e git+https://github.com/openstack/python-neutronclient.git@0ef9b8e1bdfab92514913643f7afe6c0a49f2e24#egg=python-neutronclient
+-e git+https://github.com/openstack/python-neutronclient.git@2b3cf686d6451cfcd9d3fccee2a428751f1cee4a#egg=python-neutronclient
 
 # neutron + dependencies
 mysql-python>=1.2.5
--e git+https://github.com/openstack/neutron.git@fab50bd4b3cc480b7a8fa7f6c33c3ef2e19b3438#egg=neutron
+-e git+https://github.com/openstack/neutron.git@68713c94ee6f8e02f4b967ab943549d89b3c4261#egg=neutron
 
 # ncclient dependencies (see ironic_neutron_plugin/extern)
 paramiko>=1.7.4

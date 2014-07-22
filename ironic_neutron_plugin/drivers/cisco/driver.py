@@ -26,21 +26,11 @@ from neutron.openstack.common import log as logging
 
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
+from ironic_neutron_plugin.drivers.cisco import utils as cisco_utils
 
-import re
 import time
 
 LOG = logging.getLogger(__name__)
-
-# TODO(morgabra) rethink this, at the very least make this a config
-# option. We could probably change it to a global ignore list?
-IGNORE_CLEAR = [
-    re.compile("no no logging event port link-status"),
-    re.compile("no no snmp trap link-status"),
-    re.compile("no no lldp transmit"),
-    re.compile("no spanning-tree bpduguard enable"),
-    re.compile("no channel-group \d+ mode active")
-]
 
 
 class CiscoException(base_driver.DriverException):
@@ -56,81 +46,21 @@ class CiscoDriver(base_driver.Driver):
         self.ncclient = None
         self.connections = {}
 
-    def _filter_interface_conf(self, c):
-        """Determine if an interface configuration string is relevant."""
-        if c.startswith("!"):
-            return False
+    def show_interface(self, port, type="ethernet"):
+        LOG.debug("Fetching interface %s %s" % (type, port.interface))
 
-        if c.startswith("version "):
-            return False
-
-        if c.startswith("interface"):
-            return False
-
-        if not c:
-            return False
-
-        return True
-
-    def _negate_conf(self, c):
-        """Negate a line of configuration."""
-        return "no %s" % c
-
-    def _get_result(self, res):
-        """Get text reponse from an ncclient command.
-
-        Example XML from ncclient:
-
-        <?xml version="1.0" encoding="ISO-8859-1"?>
-        <rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
-                   xmlns:if="http://www.cisco.com/nxos:1.0:if_manager"
-                   xmlns:nxos="http://www.cisco.com/nxos:1.0"
-                   message-id="urn:uuid:4a9be8b4-df85-11e3-ab20-becafe000bed">
-          <data>
-            !Command: show running-config interface Ethernet1/20
-            !Time: Mon May 19 18:40:08 2014
-
-            version 6.0(2)U2(4)
-
-            interface Ethernet1/20
-              shutdown
-              spanning-tree port type edge
-              spanning-tree bpduguard enable
-
-          </data>
-        </rpc-reply>
-
-        Example return value:
-        ['shutdown',
-         'spanning-tree port type edge',
-         'spanning-tree bpduguard enable']
-        """
-        if not res:
-            return []
-
-        # get the first child from the xml response
-        res = res._root.getchildren()
-        if len(res) != 1:
-            raise Exception("cannot parse command response")
-
-        # split the raw text by newline
-        text = res[0].text
-        if not text:
-            return []
-
-        res = text.split("\n")
-
-        # filter comments and other unrelated data
-        return [c.strip() for c in res if self._filter_interface_conf(c)]
-
-    def show(self, port, type="ethernet"):
-        LOG.debug("Fetching interface %s" % (port.interface))
-
-        eth_int = commands._make_ethernet_interface(port.interface)
-        cmds = commands.show_interface_configuration(type, eth_int)
+        cmds = commands.show_interface(type, port.interface)
 
         result = self._run_commands(port, cmds)
-        return self._get_result(result)
+        return cisco_utils.parse_interface_status(result)
+
+    def show_interface_configuration(self, port, type="ethernet"):
+        LOG.debug("Fetching interface %s %s" % (type, port.interface))
+
+        cmds = commands.show_interface_configuration(type, port.interface)
+
+        result = self._run_commands(port, cmds)
+        return cisco_utils.parse_command_result(result)
 
     def show_dhcp_snooping_configuration(self, port):
         LOG.debug("Fetching dhcp snooping entries for int %s" % port.interface)
@@ -139,21 +69,12 @@ class CiscoDriver(base_driver.Driver):
         cmds = commands.show_dhcp_snooping_configuration(po_int)
 
         result = self._run_commands(port, cmds)
-        return self._get_result(result)
+        return cisco_utils.parse_command_result(result)
 
     def clear(self, port):
         """Remove all configuration for a given interface, which includes
         the ethernet interface, related port-channel, and any dhcp snooping
         bindings or other port security features.
-
-        For some reason, you can't run 'no interface eth x/x' on
-        the 3172. So we have to read the config for the interface first
-        and manually negate each option.
-
-        'no interface port-channel' works as expected.
-
-        You must remove entries from the dhcp snooping table before removing
-        the underlying port-channel otherwise it won't work.
         """
         LOG.debug("clearing interface %s" % (port.interface))
 
@@ -161,25 +82,21 @@ class CiscoDriver(base_driver.Driver):
         po_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
-        eth_conf = self.show(port, type='ethernet')
-        eth_conf = [self._negate_conf(c) for c in eth_conf]
-
+        # get and filter relevant dhcp snooping bindings
         dhcp_conf = self.show_dhcp_snooping_configuration(port)
-        dhcp_conf = [self._negate_conf(c) for c in dhcp_conf]
+        dhcp_conf = [cisco_utils.negate_conf(c) for c in dhcp_conf]
 
-        cmds = commands._configure_interface('port-channel', po_int)
-        cmds = cmds + dhcp_conf
+        # we need to configure the portchannel because there is no
+        # guarantee that it exists, and you cannot remove snooping
+        # bindings without the actual interface existing.
+        cmds = []
+        if dhcp_conf:
+            cmds = cmds + commands._configure_interface('port-channel', po_int)
+            cmds = cmds + dhcp_conf
+
+        # delete the portchannel and default the eth interface
         cmds = cmds + commands._delete_port_channel_interface(po_int)
-        cmds = cmds + commands._configure_interface('ethernet', eth_int)
-        cmds = cmds + eth_conf + ['shutdown']
-
-        def _filter_clear_commands(c):
-            for r in IGNORE_CLEAR:
-                if r.match(c):
-                    return False
-            return True
-
-        cmds = [c for c in cmds if _filter_clear_commands(c)]
+        cmds = cmds + commands._delete_ethernet_interface(eth_int)
 
         return self._run_commands(port, cmds)
 
@@ -204,7 +121,6 @@ class CiscoDriver(base_driver.Driver):
     def delete(self, port):
         LOG.debug("Deleting port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
-
         return self.clear(port)
 
     def attach(self, port):
@@ -252,6 +168,63 @@ class CiscoDriver(base_driver.Driver):
         except CiscoException as e:
             LOG.info("Failed to remove ip binding: %s" % str(e))
             return None
+
+    def running_config(self, port):
+        LOG.debug("Fetching running-config %s" % (port.interface))
+
+        switch = {
+            "interface": port.interface,
+            "hostname": port.switch_host
+        }
+
+        running_config = {}
+
+        running_config['dhcp'] = self.show_dhcp_snooping_configuration(port)
+
+        running_config['ethernet'] = self.show_interface_configuration(
+            port, type="ethernet")
+
+        # a port-channel might not be defined
+        try:
+            running_config['port-channel'] = self.show_interface_configuration(
+                port, type="port-channel")
+        except CiscoException as e:
+            if ('syntax error' in str(e).lower()):
+                running_config['port-channel'] = ['no port-channel']
+            else:
+                raise e
+
+        return {
+            "switch": switch,
+            "running-config": running_config
+        }
+
+    def interface_status(self, port):
+        LOG.debug("Fetching interface status %s" % (port.interface))
+
+        switch = {
+            "interface": port.interface,
+            "hostname": port.switch_host
+        }
+
+        status = {}
+        status['ethernet'] = self.show_interface(
+            port, type="ethernet")
+
+        # a port-channel might not be defined
+        try:
+            status['port-channel'] = self.show_interface(
+                port, type="port-channel")
+        except CiscoException as e:
+            if ('syntax error' in str(e).lower()):
+                status['port-channel'] = ['no port-channel']
+            else:
+                raise e
+
+        return {
+            "switch": switch,
+            "interface-status": status
+        }
 
     def _import_ncclient(self):
         """Import the NETCONF client (ncclient) module.
@@ -310,12 +283,12 @@ class CiscoDriver(base_driver.Driver):
             # for latter.
             LOG.debug("Failed running commands: %s" % e)
             if c:
+                self.connections[port.switch_host] = None
                 try:
                     c.close_session()
                 except Exception as err:
                     LOG.debug("Failed closing session %(sess)s: %(e)s",
                               {'sess': c.session_id, 'e': err})
-                self.connections[port.switch_host] = None
 
             raise CiscoException(e)
 

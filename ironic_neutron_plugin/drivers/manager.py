@@ -61,6 +61,9 @@ class DriverManager(object):
 
         return list(db.get_switchports_by_ids(switchport_ids))
 
+    def _get_switchports_by_ids(self, ids):
+        return list(db.get_switchports_by_ids(ids))
+
     def _get_portbindings(self, switch_port):
         return list(db.filter_switchport_bindings(
             switch_port_id=switch_port['id']))
@@ -90,18 +93,57 @@ class DriverManager(object):
             switch_port_id=ironic_portbinding.switch_port_id,
             state=state)
 
-    def _make_port_info(self, neutron_port, neutron_network, switch_port):
-        return base_driver.PortInfo(
+    def _make_port_info(self, switch_port, neutron_port=None,
+                        neutron_network=None):
+        info = base_driver.PortInfo(
             switch_host=switch_port.switch.host,
             switch_username=switch_port.switch.username,
             switch_password=switch_port.switch.password,
-            hardware_id=neutron_port["switch:hardware_id"],
-            interface=switch_port["port"],
-            vlan_id=neutron_network["provider:segmentation_id"],
-            ip=self._get_ip(neutron_port),
-            mac_address=neutron_port["mac_address"],
-            trunked=neutron_port["trunked"]
+            interface=switch_port["port"]
         )
+
+        if neutron_port:
+            info.hardware_id = neutron_port["switch:hardware_id"]
+            info.ip = self._get_ip(neutron_port)
+            info.mac_address = neutron_port["mac_address"]
+            info.trunked = neutron_port["trunked"]
+
+        if neutron_network:
+            info.vlan_id = neutron_network["provider:segmentation_id"]
+
+        return info
+
+    def running_config(self, switch_port_id):
+        """Given a switch_port_id, look up and return relevant
+        configuration info from the underlying device.
+        """
+        # TODO(morgabra) db.get_switchport_by_id()
+        switch_ports = self._get_switchports_by_ids([switch_port_id])
+        if not switch_ports:
+            return {}
+        switch_port = switch_ports[0]
+
+        # get and return response from driver
+        # TODO(morgabra) standardize response?
+        port_info = self._make_port_info(switch_port)
+        driver = self._get_driver(switch_port)
+        return driver.running_config(port_info)
+
+    def interface_status(self, switch_port_id):
+        """Given a switch_port_id, look up and return relevant
+        status info from the underlying interface.
+        """
+        # TODO(morgabra) db.get_switchport_by_id()
+        switch_ports = self._get_switchports_by_ids([switch_port_id])
+        if not switch_ports:
+            return {}
+        switch_port = switch_ports[0]
+
+        # get and return response from driver
+        # TODO(morgabra) standardize response?
+        port_info = self._make_port_info(switch_port)
+        driver = self._get_driver(switch_port)
+        return driver.interface_status(port_info)
 
     def attach(self, neutron_port, neutron_network):
         """Realize a neutron port configuration on given physical ports.
@@ -133,7 +175,10 @@ class DriverManager(object):
 
                 driver = self._get_driver(switchport)
                 port_info = self._make_port_info(
-                    neutron_port, neutron_network, switchport)
+                    switch_port=switchport,
+                    neutron_port=neutron_port,
+                    neutron_network=neutron_network
+                )
 
                 if portbindings:
                     driver.attach(port_info)
@@ -180,7 +225,10 @@ class DriverManager(object):
 
                 driver = self._get_driver(switchport)
                 port_info = self._make_port_info(
-                    neutron_port, neutron_network, switchport)
+                    switch_port=switchport,
+                    neutron_port=neutron_port,
+                    neutron_network=neutron_network
+                )
 
                 if len(portbindings) == 1:
                     driver.delete(port_info)

@@ -28,6 +28,13 @@ class Driver(object):
     """
 
     @abc.abstractmethod
+    def running_config(self, port_info):
+        """Fetch and return relevant configuration information
+        from the device.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def create(self, port_info):
         """Create base configuration for a previously unconfigured
         port. This will be called in place of attach() the first
@@ -61,7 +68,8 @@ class PortInfo(object):
     """
 
     def __init__(self, switch_host, switch_username, switch_password,
-                 hardware_id, interface, vlan_id, ip, mac_address, trunked):
+                 interface, hardware_id=None, vlan_id=None, ip=None,
+                 mac_address=None, trunked=None):
         self.switch_host = switch_host
         self.switch_username = switch_username
         self.switch_password = switch_password
@@ -74,6 +82,9 @@ class PortInfo(object):
 
 
 class DummyDriver(Driver):
+
+    def running_config(self, port_info):
+        pass
 
     def create(self, port_info):
         pass
