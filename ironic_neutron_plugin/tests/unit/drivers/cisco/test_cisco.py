@@ -90,8 +90,8 @@ class TestCiscoDriver(unittest.TestCase):
             'no interface port-channel 1',
             'configure terminal',
             'interface ethernet 1/1',
-            'default interface ethernet 1/1',
-            'shutdown'
+            'shutdown',
+            'default interface ethernet 1/1'
         ]
 
         create_port_expected = [
@@ -239,8 +239,8 @@ class TestCiscoDriver(unittest.TestCase):
             'no interface port-channel 1',
             'configure terminal',
             'interface ethernet 1/1',
-            'default interface ethernet 1/1',
-            'shutdown'
+            'shutdown',
+            'default interface ethernet 1/1'
         ]
 
         self.assertEqual(remove_bindings_cmd, remove_bindings_expected)
