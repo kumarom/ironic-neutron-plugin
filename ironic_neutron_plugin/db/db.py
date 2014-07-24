@@ -39,6 +39,7 @@ def create_port_ext(port_id, commit, trunked, hardware_id, session=None):
             trunked=trunked,
             hardware_id=hardware_id)
         session.add(port)
+        session.flush()
         return port
 
 
@@ -120,6 +121,7 @@ def create_switchport_binding(port_id, network_id, switch_port_id,
             switch_port_id=switch_port_id,
             state=None)
         session.add(portbinding)
+        session.flush()
         return portbinding
 
 

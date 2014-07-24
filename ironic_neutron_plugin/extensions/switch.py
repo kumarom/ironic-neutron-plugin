@@ -17,6 +17,7 @@ from neutron.api import extensions
 from neutron import wsgi
 
 from ironic_neutron_plugin.db import db
+from ironic_neutron_plugin.drivers import manager
 from ironic_neutron_plugin import exceptions as exc
 
 from simplejson import scanner as json_scanner
@@ -24,6 +25,7 @@ from simplejson import scanner as json_scanner
 from neutron.api.v2 import attributes as attr
 from neutron.db import api as db_api
 from neutron.openstack.common import log as logging
+
 
 LOG = logging.getLogger(__name__)
 
@@ -95,6 +97,18 @@ class SwitchController(wsgi.Controller):
 
 class SwitchPortController(wsgi.Controller):
 
+    def __init__(self, *args, **kwargs):
+
+        # TODO(morgabra) I'm not sure it's possible or desirable
+        # to get at the driver manager instance in the plugin without
+        # a singleton or something. This seems okay, but it reduces our
+        # ability to easily restrict or rate limit open sessions and
+        # requests to devices.
+        # TODO(morgabra) This is probably a bad idea in general, but
+        # will greatly reduce debugging complexity.
+        self.driver_manager = manager.DriverManager()
+        super(SwitchPortController, self).__init__(*args, **kwargs)
+
     def index(self, request):
         filters = {}
         if request.GET.get("hardware_id"):
@@ -136,6 +150,34 @@ class SwitchPortController(wsgi.Controller):
 
         switchports = self.create_switchports(body)
         return dict(switchports=[s.as_dict() for s in switchports])
+
+    def running_config(self, request, id):
+        #TODO(morgabra) This is kind of silly that we pass an abstract
+        # id to the driver after just looking it up - maybe allow both?
+        switch_ports = self.show(request, id)
+        switch_ports = switch_ports.get('switchports', [])
+
+        config = {}
+        for switch_port in switch_ports:
+            switch_port_id = switch_port['id']
+            config[switch_port_id] = self.driver_manager.running_config(
+                switch_port_id)
+
+        return config
+
+    def interface_status(self, request, id):
+        #TODO(morgabra) This is kind of silly that we pass an abstract
+        # id to the driver after just looking it up - maybe allow both?
+        switch_ports = self.show(request, id)
+        switch_ports = switch_ports.get('switchports', [])
+
+        config = {}
+        for switch_port in switch_ports:
+            switch_port_id = switch_port['id']
+            config[switch_port_id] = self.driver_manager.interface_status(
+                switch_port_id)
+
+        return config
 
     @classmethod
     def _validate_hardware_id(cls, switchports):
@@ -322,8 +364,11 @@ class Switch(extensions.ExtensionDescriptor):
                                                  SwitchController())
         resources.append(sresource)
 
-        presource = extensions.ResourceExtension("switchports",
-                                                 SwitchPortController())
+        presource = extensions.ResourceExtension(
+            "switchports",
+            SwitchPortController(),
+            member_actions={'running_config': 'GET',
+                            'interface_status': 'GET'})
         resources.append(presource)
         return resources
 

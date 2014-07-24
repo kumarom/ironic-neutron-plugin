@@ -20,27 +20,22 @@ This is lifted partially from the cisco ml2 mechanism.
 """
 from ironic_neutron_plugin import config
 
-from neutron.common import utils
+import eventlet
+
 from neutron.openstack.common import importutils
 from neutron.openstack.common import log as logging
 
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import commands
+from ironic_neutron_plugin.drivers.cisco import utils as cisco_utils
 
-import re
 import time
 
 LOG = logging.getLogger(__name__)
 
-# TODO(morgabra) rethink this, at the very least make this a config
-# option. We could probably change it to a global ignore list?
-IGNORE_CLEAR = [
-    re.compile("no no logging event port link-status"),
-    re.compile("no no snmp trap link-status"),
-    re.compile("no no lldp transmit"),
-    re.compile("no spanning-tree bpduguard enable"),
-    re.compile("no channel-group \d+ mode active")
-]
+RETRYABLE_ERRORS = ['authorization failed',
+                    'permission denied',
+                    'not connected to netconf server']
 
 
 class CiscoException(base_driver.DriverException):
@@ -56,81 +51,62 @@ class CiscoDriver(base_driver.Driver):
         self.ncclient = None
         self.connections = {}
 
-    def _filter_interface_conf(self, c):
-        """Determine if an interface configuration string is relevant."""
-        if c.startswith("!"):
-            return False
+        self._save_queue = eventlet.queue.Queue(maxsize=20)
+        eventlet.spawn(self._process_save_queue)
+        eventlet.sleep(0)
 
-        if c.startswith("version "):
-            return False
+    def _process_save_queue(self):
+        while True:
+            try:
+                port = self._save_queue.get()
+                LOG.info('Starting config save for %s %s' %
+                         (port.switch_host, port.interface))
+                self._save(port)
+            except Exception as e:
+                LOG.error(('Config save on switch %s failed, %s') %
+                          (port.switch_host, e))
 
-        if c.startswith("interface"):
-            return False
+    def _save(self, port):
+        cmds = commands.copy_running_config()
+        self._run_commands(port, cmds)
 
-        if not c:
-            return False
+    def save(self, port, async=True):
+        """The 'copy running-config startup-config' command is slow but
+        important to run after each logical config change. So instead of
+        blocking for several additional seconds, we make an effort to
+        queue the saves to execute asynchronously.
 
-        return True
-
-    def _negate_conf(self, c):
-        """Negate a line of configuration."""
-        return "no %s" % c
-
-    def _get_result(self, res):
-        """Get text reponse from an ncclient command.
-
-        Example XML from ncclient:
-
-        <?xml version="1.0" encoding="ISO-8859-1"?>
-        <rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
-                   xmlns:if="http://www.cisco.com/nxos:1.0:if_manager"
-                   xmlns:nxos="http://www.cisco.com/nxos:1.0"
-                   message-id="urn:uuid:4a9be8b4-df85-11e3-ab20-becafe000bed">
-          <data>
-            !Command: show running-config interface Ethernet1/20
-            !Time: Mon May 19 18:40:08 2014
-
-            version 6.0(2)U2(4)
-
-            interface Ethernet1/20
-              shutdown
-              spanning-tree port type edge
-              spanning-tree bpduguard enable
-
-          </data>
-        </rpc-reply>
-
-        Example return value:
-        ['shutdown',
-         'spanning-tree port type edge',
-         'spanning-tree bpduguard enable']
+        TODO(morgabra) The other options here are an infinitely sized queue
+        or block put() if the queue is full. Because save() is not required
+        for functionality, I think it's probably best to not have to worry
+        about a runaway queue or potentially blocking for a long time.
         """
-        if not res:
-            return []
+        if async:
+            try:
+                LOG.info('Queuing save for %s %s' % (port.switch_host,
+                                                     port.interface))
+                self._save_queue.put(port, block=False)
+            except eventlet.queue.Full:
+                LOG.error('Config save for %s %s failed, queue is full.' %
+                          (port.switch_host, port.interface))
+        else:
+            self._save(port)
 
-        # get the first child from the xml response
-        res = res._root.getchildren()
-        if len(res) != 1:
-            raise Exception("cannot parse command response")
+    def show_interface(self, port, type="ethernet"):
+        LOG.debug("Fetching interface %s %s" % (type, port.interface))
 
-        # split the raw text by newline
-        text = res[0].text
-        if not text:
-            return []
-
-        res = text.split("\n")
-
-        # filter comments and other unrelated data
-        return [c.strip() for c in res if self._filter_interface_conf(c)]
-
-    def show(self, port, type="ethernet"):
-        LOG.debug("Fetching interface %s" % (port.interface))
-
-        eth_int = commands._make_ethernet_interface(port.interface)
-        cmds = commands.show_interface_configuration(type, eth_int)
+        cmds = commands.show_interface(type, port.interface)
 
         result = self._run_commands(port, cmds)
-        return self._get_result(result)
+        return cisco_utils.parse_interface_status(result)
+
+    def show_interface_configuration(self, port, type="ethernet"):
+        LOG.debug("Fetching interface %s %s" % (type, port.interface))
+
+        cmds = commands.show_interface_configuration(type, port.interface)
+
+        result = self._run_commands(port, cmds)
+        return cisco_utils.parse_command_result(result)
 
     def show_dhcp_snooping_configuration(self, port):
         LOG.debug("Fetching dhcp snooping entries for int %s" % port.interface)
@@ -139,21 +115,12 @@ class CiscoDriver(base_driver.Driver):
         cmds = commands.show_dhcp_snooping_configuration(po_int)
 
         result = self._run_commands(port, cmds)
-        return self._get_result(result)
+        return cisco_utils.parse_command_result(result)
 
-    def clear(self, port):
+    def _clear(self, port):
         """Remove all configuration for a given interface, which includes
         the ethernet interface, related port-channel, and any dhcp snooping
         bindings or other port security features.
-
-        For some reason, you can't run 'no interface eth x/x' on
-        the 3172. So we have to read the config for the interface first
-        and manually negate each option.
-
-        'no interface port-channel' works as expected.
-
-        You must remove entries from the dhcp snooping table before removing
-        the underlying port-channel otherwise it won't work.
         """
         LOG.debug("clearing interface %s" % (port.interface))
 
@@ -161,30 +128,26 @@ class CiscoDriver(base_driver.Driver):
         po_int = commands._make_portchannel_interface(interface)
         eth_int = commands._make_ethernet_interface(interface)
 
-        eth_conf = self.show(port, type='ethernet')
-        eth_conf = [self._negate_conf(c) for c in eth_conf]
-
+        # get and filter relevant dhcp snooping bindings
         dhcp_conf = self.show_dhcp_snooping_configuration(port)
-        dhcp_conf = [self._negate_conf(c) for c in dhcp_conf]
+        dhcp_conf = [cisco_utils.negate_conf(c) for c in dhcp_conf]
 
-        cmds = commands._configure_interface('port-channel', po_int)
-        cmds = cmds + dhcp_conf
+        # we need to configure the portchannel because there is no
+        # guarantee that it exists, and you cannot remove snooping
+        # bindings without the actual interface existing.
+        cmds = []
+        if dhcp_conf:
+            cmds = cmds + commands._configure_interface('port-channel', po_int)
+            cmds = cmds + dhcp_conf
+
+        # delete the portchannel and default the eth interface
         cmds = cmds + commands._delete_port_channel_interface(po_int)
-        cmds = cmds + commands._configure_interface('ethernet', eth_int)
-        cmds = cmds + eth_conf + ['shutdown']
-
-        def _filter_clear_commands(c):
-            for r in IGNORE_CLEAR:
-                if r.match(c):
-                    return False
-            return True
-
-        cmds = [c for c in cmds if _filter_clear_commands(c)]
+        cmds = cmds + commands._delete_ethernet_interface(eth_int)
 
         return self._run_commands(port, cmds)
 
     def create(self, port):
-        self.clear(port)
+        self._clear(port)
 
         LOG.debug("Creating port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
@@ -199,13 +162,16 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        return self._run_commands(port, cmds)
+        res = self._run_commands(port, cmds)
+        self.save(port)
+        return res
 
     def delete(self, port):
         LOG.debug("Deleting port %s for hardware_id %s"
                   % (port.interface, port.hardware_id))
-
-        return self.clear(port)
+        res = self._clear(port)
+        self.save(port)
+        return res
 
     def attach(self, port):
         LOG.debug("Attaching vlan %s to interface %s"
@@ -218,7 +184,9 @@ class CiscoDriver(base_driver.Driver):
             mac_address=port.mac_address,
             trunked=port.trunked)
 
-        return self._run_commands(port, cmds)
+        res = self._run_commands(port, cmds)
+        self.save(port)
+        return res
 
     def detach(self, port):
         LOG.debug("Detaching vlan %s from interface %s"
@@ -248,10 +216,70 @@ class CiscoDriver(base_driver.Driver):
         )
 
         try:
-            return self._run_commands(port, cmds)
+            res = self._run_commands(port, cmds)
         except CiscoException as e:
             LOG.info("Failed to remove ip binding: %s" % str(e))
-            return None
+            res = None
+
+        self.save(port)
+        return res
+
+    def running_config(self, port):
+        LOG.debug("Fetching running-config %s" % (port.interface))
+
+        switch = {
+            "interface": port.interface,
+            "hostname": port.switch_host
+        }
+
+        running_config = {}
+
+        running_config['dhcp'] = self.show_dhcp_snooping_configuration(port)
+
+        running_config['ethernet'] = self.show_interface_configuration(
+            port, type="ethernet")
+
+        # a port-channel might not be defined
+        try:
+            running_config['port-channel'] = self.show_interface_configuration(
+                port, type="port-channel")
+        except CiscoException as e:
+            if ('syntax error' in str(e).lower()):
+                running_config['port-channel'] = ['no port-channel']
+            else:
+                raise e
+
+        return {
+            "switch": switch,
+            "running-config": running_config
+        }
+
+    def interface_status(self, port):
+        LOG.debug("Fetching interface status %s" % (port.interface))
+
+        switch = {
+            "interface": port.interface,
+            "hostname": port.switch_host
+        }
+
+        status = {}
+        status['ethernet'] = self.show_interface(
+            port, type="ethernet")
+
+        # a port-channel might not be defined
+        try:
+            status['port-channel'] = self.show_interface(
+                port, type="port-channel")
+        except CiscoException as e:
+            if ('syntax error' in str(e).lower()):
+                status['port-channel'] = ['no port-channel']
+            else:
+                raise e
+
+        return {
+            "switch": switch,
+            "interface-status": status
+        }
 
     def _import_ncclient(self):
         """Import the NETCONF client (ncclient) module.
@@ -263,14 +291,14 @@ class CiscoDriver(base_driver.Driver):
         """
         return importutils.import_module('ncclient.manager')
 
-    @utils.synchronized('ironic-cisco-driver')
     def _connect(self, port):
         c = self.connections.get(port.switch_host)
 
         # TODO(morgabra) connected is updated from a thread, so obviously
         # there are some issues with checking this here.
         if not c or not c.connected:
-            LOG.debug("starting session: %s" % (port.switch_host))
+            LOG.debug("starting session: %s@%s" % (port.switch_username,
+                                                   port.switch_host))
             connect_args = {
                 "host": port.switch_host,
                 "port": 22,  # TODO(morgabra) configurable
@@ -281,20 +309,31 @@ class CiscoDriver(base_driver.Driver):
             c = self.ncclient.connect(**connect_args)
             self.connections[port.switch_host] = c
 
-        LOG.debug("got session: %s" % (c.session_id))
+        LOG.debug("got session: %s@%s id:%s" % (port.switch_username,
+                                                port.switch_host,
+                                                c.session_id))
 
         return c
+
+    def _retryable_error(self, err, retryable=RETRYABLE_ERRORS):
+        err = str(err).lower()
+        for retry_err in retryable:
+            if retry_err in err:
+                return True
+        return False
 
     def _run_commands_inner(self, port, commands):
 
         if not commands:
-            LOG.debug("No commands to run")
+            LOG.debug("No commands to run - %(switch)s %(interface)s" %
+                     (port.switch_host, port.interface))
             return
 
-        LOG.debug("executing commands: %s" % (commands))
+        LOG.debug("executing commands - %s %s: %s" %
+                 (port.switch_host, port.interface, commands))
 
         if self.dry_run:
-            LOG.debug("Dry run is enabled, skipping")
+            LOG.debug("Dry run is enabled - skipping")
             return None
 
         if not self.ncclient:
@@ -305,17 +344,20 @@ class CiscoDriver(base_driver.Driver):
             c = self._connect(port)
             return c.command(commands)
         except Exception as e:
-            # TODO(morgabra) Tell the difference between a connection error and
-            # and a config error. We don't need to clear the current connection
-            # for latter.
-            LOG.debug("Failed running commands: %s" % e)
-            if c:
-                try:
-                    c.close_session()
-                except Exception as err:
-                    LOG.debug("Failed closing session %(sess)s: %(e)s",
-                              {'sess': c.session_id, 'e': err})
-                self.connections[port.switch_host] = None
+            LOG.debug("Failed running commands - %s %s: %s" %
+                     (port.switch_host, port.interface, e))
+
+            retryable = ['syntax error']
+            if (self._retryable_error(e, retryable=retryable)):
+                LOG.debug(e)
+            else:
+                if c:
+                    self.connections[port.switch_host] = None
+                    try:
+                        c.close_session()
+                    except Exception as err:
+                        LOG.debug("Failed closing session %(sess)s: %(e)s",
+                                  {'sess': c.session_id, 'e': err})
 
             raise CiscoException(e)
 
@@ -324,22 +366,12 @@ class CiscoDriver(base_driver.Driver):
         max_tries = 1 + config.cfg.CONF.ironic.auth_failure_retries
         sleep_time = config.cfg.CONF.ironic.auth_failure_retry_interval
 
-        retryable_errors = ['authorization failed',
-                            'Permission denied',
-                            'Not connected to NETCONF server']
-
-        def retryable_error(err):
-            for retry_err in retryable_errors:
-                if retry_err in err:
-                    return True
-            return False
-
         while True:
             num_tries += 1
             try:
                 return self._run_commands_inner(port, commands)
             except CiscoException as err:
-                if (num_tries == max_tries or not retryable_error(str(err))):
+                if (num_tries == max_tries or not self._retryable_error(err)):
                     raise
                 LOG.warning("Received retryable failure: %s" % err)
             time.sleep(sleep_time)

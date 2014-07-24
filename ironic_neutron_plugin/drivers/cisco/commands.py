@@ -15,10 +15,6 @@
 
 import re
 
-from ironic_neutron_plugin import config
-
-CONF = config.cfg.CONF
-
 
 def _configure():
     return ['configure terminal']
@@ -54,7 +50,6 @@ def _base_trunked_configuration(hardware_id, interface, vlan_id):
         'switchport mode trunk',
         'switchport trunk allowed vlan %s' % vlan_id,
         'spanning-tree port type edge trunk',
-        'no shutdown'
     ]
 
 
@@ -65,30 +60,12 @@ def _base_access_configuration(hardware_id, interface, vlan_id):
         'switchport mode access',
         'switchport access vlan %s' % vlan_id,
         'spanning-tree port type edge',
-        'no shutdown'
     ]
 
 
-# TODO(morgabra) Ideally a switch would support 'default interface eth 1/X'
-# or something similar, but for some reason the 3172s do not for physical
-# interfaces so you have to manually unset everything.
-def _delete_access_configuration(vlan_id):
+def _default_interface(type, interface):
     return [
-        'no description',
-        'no switchport mode access',
-        'no switchport access vlan %s' % (vlan_id),
-        'no spanning-tree port type edge',
-        'shutdown'
-    ]
-
-
-def _delete_trunked_configuration():
-    return [
-        'no description',
-        'no switchport mode trunk',
-        'no switchport trunk allowed vlan all',
-        'no spanning-tree port type edge trunk',
-        'shutdown'
+        'default interface %s %s' % (type, interface)
     ]
 
 
@@ -105,16 +82,12 @@ def _add_channel_group(interface):
 
 
 def _add_ipsg():
-    if not CONF.ironic.use_port_security:
-        return []
     return [
         'ip verify source dhcp-snooping-vlan'
     ]
 
 
 def _remove_ipsg():
-    if not CONF.ironic.use_port_security:
-        return []
     return [
         'no ip verify source dhcp-snooping-vlan'
     ]
@@ -129,6 +102,24 @@ def _add_lldp():
 def _remove_lldp():
     return [
         'no lldp transmit'
+    ]
+
+
+def _add_cdp():
+    return [
+        'cdp enable'
+    ]
+
+
+def _remove_cdp():
+    return [
+        'no cdp enable'
+    ]
+
+
+def _add_bpduguard():
+    return [
+        'spanning-tree bpduguard enable'
     ]
 
 
@@ -150,25 +141,43 @@ def _unbind_ip(ip, mac_address, vlan_id, interface):
 
 def _delete_port_channel_interface(interface):
     return (
+        # we configure it first to ensure it exists, otherwise
+        # 'no interface po X' will fail and we don't want to have
+        # to check beforehand.
         _configure_interface("port-channel", interface) +
+        # this still works without it enabled, ensuring that
+        # all the member interfaces get this setting removed.
+        _remove_ipsg() +
         ['no interface port-channel %s' % (interface)]
     )
 
 
-def _delete_ethernet_interface(interface, trunked, vlan_id=None):
-    cmd = None
-    if trunked:
-        cmd = _delete_trunked_configuration()
-    else:
-        cmd = _delete_access_configuration(vlan_id)
-
+def _delete_ethernet_interface(interface):
     return (
+        _configure() +
+        _default_interface('ethernet', interface) +
         _configure_interface('ethernet', interface) +
-        cmd
+        ['shutdown']
     )
 
 
+def copy_running_config():
+    return ['copy running-config startup-config']
+
+
+def show_interface(type, interface):
+    if type == 'ethernet':
+        interface = _make_ethernet_interface(interface)
+    elif type == 'port-channel':
+        interface = _make_portchannel_interface(interface)
+    return ['show interface %s %s' % (type, interface)]
+
+
 def show_interface_configuration(type, interface):
+    if type == 'ethernet':
+        interface = _make_ethernet_interface(interface)
+    elif type == 'port-channel':
+        interface = _make_portchannel_interface(interface)
     return ['show running interface %s %s' % (type, interface)]
 
 
@@ -203,6 +212,7 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             _base_trunked_configuration(hardware_id, portchan_int, vlan_id) +
             _add_vpc(portchan_int) +
             _add_ipsg() +
+            ['no shutdown'] +
 
             # add mac/ip to the dhcp snooping table
             _bind_ip(ip, mac_address, vlan_id, portchan_int) +
@@ -210,39 +220,28 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             # ethernet
             _configure_interface('ethernet', eth_int) +
             _base_trunked_configuration(hardware_id, eth_int, vlan_id) +
+            _add_bpduguard() +
             _add_channel_group(portchan_int) +
             # TODO(morgabra) We're assuming an access port allows LLDP
             # and a trunked port does not. This is not a correct assumption
             # in the general case.
             # It seems overkill to include LLDP as a flag on the network
             # object or something but I can't think of a better way.
-            _remove_lldp()
+            _remove_lldp() +
+            _remove_cdp() +
+            ['no shutdown']
         )
     else:
         conf = (
             _configure_interface('ethernet', eth_int) +
             _base_access_configuration(hardware_id, portchan_int, vlan_id) +
+            _add_bpduguard() +
             _add_lldp() +
-            # If this interface belonged to a portchannel that has IPSG
-            # enabled and you drop the portchannel, the IPSG still sticks.
-            _add_ipsg() +
-            _remove_ipsg()
+            _add_cdp() +
+            ['no shutdown']
         )
 
     return conf
-
-
-def delete_port(interface, trunked, vlan_id=None):
-
-    portchan_int = _make_portchannel_interface(interface)
-    eth_int = _make_ethernet_interface(interface)
-
-    return (
-        # TODO(morgabra) this will leave orphaned ip bindings if trunked!
-        # Make sure you remove all vlans before deleting a port
-        _delete_port_channel_interface(portchan_int) +
-        _delete_ethernet_interface(eth_int, trunked, vlan_id=vlan_id)
-    )
 
 
 def add_vlan(interface, vlan_id, ip, mac_address, trunked):
@@ -250,7 +249,6 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
 
     if trunked:
         return (
-            # port-channel
             _configure_interface('port-channel', portchan_int) +
             ['switchport trunk allowed vlan add %s' % (vlan_id)] +
 
@@ -266,7 +264,6 @@ def remove_vlan(interface, vlan_id, ip, mac_address, trunked):
 
     if trunked:
         return (
-            # port-channel
             _configure_interface('port-channel', portchan_int) +
             ['switchport trunk allowed vlan remove %s' % (vlan_id)]
         )
