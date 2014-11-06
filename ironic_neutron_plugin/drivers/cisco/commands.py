@@ -87,6 +87,12 @@ def _add_ipsg():
     ]
 
 
+def _block_unicast():
+    return [
+        'switchport block unicast'
+    ]
+
+
 def _remove_ipsg():
     return [
         'no ip verify source dhcp-snooping-vlan'
@@ -207,28 +213,27 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
     conf = []
     if trunked:
         conf = (
-            # port-channel
+            # create port-channel
             _configure_interface('port-channel', portchan_int) +
-            _base_trunked_configuration(hardware_id, portchan_int, vlan_id) +
-            _add_vpc(portchan_int) +
-            _add_ipsg() +
-            ['no shutdown'] +
 
             # add mac/ip to the dhcp snooping table
             _bind_ip(ip, mac_address, vlan_id, portchan_int) +
 
-            # ethernet
+            # add physical interface to port channel
             _configure_interface('ethernet', eth_int) +
-            _base_trunked_configuration(hardware_id, eth_int, vlan_id) +
-            _add_bpduguard() +
             _add_channel_group(portchan_int) +
-            # TODO(morgabra) We're assuming an access port allows LLDP
-            # and a trunked port does not. This is not a correct assumption
-            # in the general case.
-            # It seems overkill to include LLDP as a flag on the network
-            # object or something but I can't think of a better way.
+
+            # set physical interface options
+            _add_bpduguard() +
             _remove_lldp() +
             _remove_cdp() +
+            ['no shutdown'] +
+
+            # configure port-channel
+            _configure_interface('port-channel', portchan_int) +
+            _base_trunked_configuration(hardware_id, portchan_int, vlan_id) +
+            _add_ipsg() +
+            _block_unicast() +
             ['no shutdown']
         )
     else:
@@ -238,6 +243,13 @@ def create_port(hardware_id, interface, vlan_id, ip, mac_address, trunked):
             _add_bpduguard() +
             _add_lldp() +
             _add_cdp() +
+
+            # This fixes a known bug where member interfaces of a port-channel
+            # still have this enabled silently. It appears even removing it
+            # from the port-channel ahead of time isn't good enough.
+            _add_ipsg() +
+            _remove_ipsg() +
+
             ['no shutdown']
         )
 
@@ -249,11 +261,13 @@ def add_vlan(interface, vlan_id, ip, mac_address, trunked):
 
     if trunked:
         return (
-            _configure_interface('port-channel', portchan_int) +
-            ['switchport trunk allowed vlan add %s' % (vlan_id)] +
-
             # add mac/ip to the dhcp snooping table
-            _bind_ip(ip, mac_address, vlan_id, portchan_int)
+            _configure_interface('port-channel', portchan_int) +
+            _bind_ip(ip, mac_address, vlan_id, portchan_int) +
+
+            # add port-channel to vlan
+            _configure_interface('port-channel', portchan_int) +
+            ['switchport trunk allowed vlan add %s' % (vlan_id)]
         )
     else:
         return []  # TODO(morgabra) throw? This is a no-op

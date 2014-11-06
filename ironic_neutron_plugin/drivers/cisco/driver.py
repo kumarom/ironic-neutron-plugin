@@ -23,6 +23,7 @@ from ironic_neutron_plugin import config
 import eventlet
 
 from neutron.openstack.common import importutils
+from neutron.openstack.common import lockutils
 from neutron.openstack.common import log as logging
 
 from ironic_neutron_plugin.drivers import base as base_driver
@@ -44,51 +45,84 @@ class CiscoException(base_driver.DriverException):
 
 class CiscoDriver(base_driver.Driver):
 
-    def __init__(self, dry_run=None):
+    def __init__(self, dry_run=None,
+                 save_queue_max_age=None,
+                 save_queue_get_wait=None):
+
+        self._config = config.cfg.CONF.ironic
+        self.connections = {}
+        self.ncclient = None
+
         self.dry_run = dry_run
         if dry_run is None:
-            self.dry_run = config.cfg.CONF.ironic.dry_run
-        self.ncclient = None
-        self.connections = {}
+            self.dry_run = self._config.dry_run
 
-        self._save_queue = eventlet.queue.Queue(maxsize=20)
+        self._save_queue_max_age = save_queue_max_age
+        if self._save_queue_max_age is None:
+            self._save_queue_max_age = self._config.save_queue_max_age
+
+        self._save_queue_get_wait = save_queue_get_wait
+        if self._save_queue_get_wait is None:
+            self._save_queue_get_wait = self._config.save_queue_get_wait
+
+        self._save_queue = eventlet.queue.Queue(maxsize=50)
+
         eventlet.spawn(self._process_save_queue)
         eventlet.sleep(0)
 
     def _process_save_queue(self):
+
         while True:
-            try:
-                port = self._save_queue.get()
-                LOG.info('Starting config save for %s %s' %
-                         (port.switch_host, port.interface))
-                self._save(port)
-            except Exception as e:
-                LOG.error(('Config save on switch %s failed, %s') %
-                          (port.switch_host, e))
+            start_time = time.time()
+            elapsed = lambda: time.time() - start_time
+
+            # poll save queue
+            save_queue = {}
+            LOG.debug('Polling save queue.')
+            while not save_queue or elapsed() < self._save_queue_max_age:
+                try:
+                    port = self._save_queue.get(
+                        timeout=self._save_queue_get_wait)
+                    save_queue[port[0].switch_host] = port
+                    LOG.debug(('Queued config save on %s.' %
+                              (port[0].switch_host)))
+                except eventlet.queue.Empty:
+                    if not save_queue:
+                        start_time = time.time()
+
+            # process save queue
+            LOG.info('Running config save on %s queued items.' % len(save_queue))
+            for port, attempt in save_queue.values():
+                attempt = attempt + 1
+                LOG.debug(('Starting config save on %s (attempt %d/3)' %
+                          (port.switch_host, attempt)))
+                try:
+                    self._save(port)
+                    LOG.info(('Finished config save on %s (attempt %d/3)' %
+                               (port.switch_host, attempt)))
+                except Exception as e:
+                    if attempt >= 3:
+                        LOG.error(('Failed config save on %s (attempt: %d/3) '
+                                   'Aborting, %s') % (port.switch_host, attempt, e))
+                    else:
+                        LOG.debug(('Failed config save on %s (attempt: %d/3) '
+                                   'Retrying, %s') % (port.switch_host, attempt, e))
+                        self._save_queue.put((port, attempt))
+
+                eventlet.sleep(0)  # yield after each save
 
     def _save(self, port):
         cmds = commands.copy_running_config()
         self._run_commands(port, cmds)
 
     def save(self, port, async=True):
-        """The 'copy running-config startup-config' command is slow but
-        important to run after each logical config change. So instead of
-        blocking for several additional seconds, we make an effort to
-        queue the saves to execute asynchronously.
-
-        TODO(morgabra) The other options here are an infinitely sized queue
-        or block put() if the queue is full. Because save() is not required
-        for functionality, I think it's probably best to not have to worry
-        about a runaway queue or potentially blocking for a long time.
-        """
         if async:
             try:
-                LOG.info('Queuing save for %s %s' % (port.switch_host,
-                                                     port.interface))
-                self._save_queue.put(port, block=False)
+                LOG.info('Queuing config save on %s' % (port.switch_host))
+                self._save_queue.put((port, 0), block=False)
             except eventlet.queue.Full:
-                LOG.error('Config save for %s %s failed, queue is full.' %
-                          (port.switch_host, port.interface))
+                LOG.error('Failed config save on %s, queue is full.' %
+                          (port.switch_host))
         else:
             self._save(port)
 
@@ -140,8 +174,15 @@ class CiscoDriver(base_driver.Driver):
             cmds = cmds + commands._configure_interface('port-channel', po_int)
             cmds = cmds + dhcp_conf
 
+        # for some reason authentication errors happen apparently randomly when
+        # running commands. All other port creation commands are safe to run
+        # twice during retry except for removing the dhcp binding, which fails
+        # with 'ERROR: Entry does not exist'
+        if cmds:
+            self._run_commands(port, cmds)
+
         # delete the portchannel and default the eth interface
-        cmds = cmds + commands._delete_port_channel_interface(po_int)
+        cmds = commands._delete_port_channel_interface(po_int)
         cmds = cmds + commands._delete_ethernet_interface(eth_int)
 
         return self._run_commands(port, cmds)
@@ -163,7 +204,20 @@ class CiscoDriver(base_driver.Driver):
             trunked=port.trunked)
 
         res = self._run_commands(port, cmds)
+
+        # for some reason authentication errors happen apparently randomly when
+        # running commands. All other port creation commnads are safe to run
+        # twice during retry except for adding the vpc to the port-channel, as
+        # it fails with 'ERROR: Operation failed: [vPC already exists]'
+        if port.trunked:
+            interface = port.interface
+            po_int = commands._make_portchannel_interface(interface)
+            cmds = commands._configure_interface('port-channel', po_int)
+            cmds = cmds + commands._add_vpc(po_int)
+            res = self._run_commands(port, cmds)
+
         self.save(port)
+
         return res
 
     def delete(self, port):
@@ -347,29 +401,29 @@ class CiscoDriver(base_driver.Driver):
             LOG.debug("Failed running commands - %s %s: %s" %
                      (port.switch_host, port.interface, e))
 
-            retryable = ['syntax error']
-            if (self._retryable_error(e, retryable=retryable)):
-                LOG.debug(e)
-            else:
-                if c:
-                    self.connections[port.switch_host] = None
-                    try:
-                        c.close_session()
-                    except Exception as err:
-                        LOG.debug("Failed closing session %(sess)s: %(e)s",
-                                  {'sess': c.session_id, 'e': err})
+            if c:
+                self.connections[port.switch_host] = None
+                try:
+                    c.close_session()
+                except Exception as err:
+                    LOG.debug("Failed closing session %(sess)s: %(e)s",
+                              {'sess': c.session_id, 'e': err})
 
             raise CiscoException(e)
 
     def _run_commands(self, port, commands):
         num_tries = 0
-        max_tries = 1 + config.cfg.CONF.ironic.auth_failure_retries
-        sleep_time = config.cfg.CONF.ironic.auth_failure_retry_interval
+        max_tries = 1 + self._config.auth_failure_retries
+        sleep_time = self._config.auth_failure_retry_interval
 
         while True:
             num_tries += 1
             try:
-                return self._run_commands_inner(port, commands)
+                # we must lock during switch communication here because we run
+                # the save commands in a separate greenthread.
+                with lockutils.lock('CiscoDriver-%s' % (port.switch_host),
+                                    lock_file_prefix='neutron-'):
+                    return self._run_commands_inner(port, commands)
             except CiscoException as err:
                 if (num_tries == max_tries or not self._retryable_error(err)):
                     raise

@@ -15,14 +15,13 @@
 
 import eventlet
 import mock
+
 import unittest
+import xml.etree.ElementTree as ET
 
 from ironic_neutron_plugin.drivers import base as base_driver
 from ironic_neutron_plugin.drivers.cisco import driver
-
 from ironic_neutron_plugin.tests.unit.drivers.cisco import fixtures
-
-import xml.etree.ElementTree as ET
 
 
 class FakeNcClientResponse(object):
@@ -44,19 +43,195 @@ class TestCiscoDriver(unittest.TestCase):
                           '_import_ncclient',
                           return_value=self.ncclient_manager).start()
 
-        self.driver = driver.CiscoDriver()
+        self.driver = driver.CiscoDriver(save_queue_max_age=0,
+                                         save_queue_get_wait=0)
 
     def _get_called_commands(self, pos=0):
         return self.ncclient.command.call_args_list[pos][0][0]
 
-    def test_create(self):
+    def test_save(self):
+
+        self.ncclient.command.side_effect = [
+            # save commands
+            FakeNcClientResponse(fixtures.ok())
+        ]
+
+        port = base_driver.PortInfo(
+            switch_host='switch1.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=True)
+
+        self.driver.save(port)
+        eventlet.sleep(0)
+
+        self.assertEqual(self.ncclient.command.call_count, 1)
+        save_cmd = self._get_called_commands(0)
+
+        save_expected = ['copy running-config startup-config']
+
+        self.assertEqual(save_cmd, save_expected)
+
+    def test_save_combines_same_host(self):
+
+        self.ncclient.command.side_effect = [
+            # save commands
+            FakeNcClientResponse(fixtures.ok())
+        ]
+
+        self.driver = driver.CiscoDriver(save_queue_max_age=.01, save_queue_get_wait=0)
+
+        port = base_driver.PortInfo(
+            switch_host='switch1.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=True)
+
+        self.driver.save(port)
+        self.driver.save(port)
+        eventlet.sleep(.02)
+
+        self.assertEqual(self.ncclient.command.call_count, 1)
+        save_cmd = self._get_called_commands(0)
+
+        save_expected = ['copy running-config startup-config']
+
+        self.assertEqual(save_cmd, save_expected)
+
+    def test_save_different_hosts(self):
+
+        self.ncclient.command.side_effect = [
+            # save commands
+            FakeNcClientResponse(fixtures.ok())
+        ]
+
+        self.driver = driver.CiscoDriver(save_queue_max_age=.01,
+                                         save_queue_get_wait=0)
+
+        port = base_driver.PortInfo(
+            switch_host='switch1.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=True)
+
+        port2 = base_driver.PortInfo(
+            switch_host='switch2.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=True)
+
+        self.driver.save(port)
+        self.driver.save(port2)
+        eventlet.sleep(.02)
+
+        self.assertEqual(self.ncclient.command.call_count, 2)
+        save_cmd = self._get_called_commands(0)
+        save_cmd2 = self._get_called_commands(1)
+
+        save_expected = ['copy running-config startup-config']
+
+        self.assertEqual(save_cmd, save_expected)
+        self.assertEqual(save_cmd2, save_expected)
+
+    def test_save_retries(self):
+
+        self.ncclient.command.side_effect = [
+            # first save exception
+            Exception("failed save"),
+            # second save works
+            FakeNcClientResponse(fixtures.ok())
+        ]
+
+        port = base_driver.PortInfo(
+            switch_host='switch1.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=True)
+
+        self.driver.save(port)
+        eventlet.sleep(.02)
+
+        self.assertEqual(self.ncclient.command.call_count, 2)
+        save_cmd = self._get_called_commands(0)
+        save_cmd2 = self._get_called_commands(1)
+
+        save_expected = ['copy running-config startup-config']
+
+        self.assertEqual(save_cmd, save_expected)
+        self.assertEqual(save_cmd2, save_expected)
+
+    def test_save_aborts(self):
+
+        self.ncclient.command.side_effect = [
+            Exception("failed save"),
+            Exception("failed save"),
+            Exception("failed save")
+        ]
+
+        port = base_driver.PortInfo(
+            switch_host='switch1.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=True)
+
+        eventlet.spawn(self.driver.save, port).wait()
+        eventlet.sleep(.02)
+
+        self.assertEqual(self.ncclient.command.call_count, 3)
+        save_cmd = self._get_called_commands(0)
+        save_cmd2 = self._get_called_commands(1)
+        save_cmd3 = self._get_called_commands(2)
+
+        save_expected = ['copy running-config startup-config']
+
+        self.assertEqual(save_cmd, save_expected)
+        self.assertEqual(save_cmd2, save_expected)
+        self.assertEqual(save_cmd3, save_expected)
+
+    def test_create_trunked(self):
 
         self.ncclient.command.side_effect = [
             # list dhcp bindings to clear
             FakeNcClientResponse(fixtures.show_dhcp(1)),
+            # run dhcp binding delete commands
+            FakeNcClientResponse(fixtures.ok()),
             # run clear commands
             FakeNcClientResponse(fixtures.ok()),
             # run create commands
+            FakeNcClientResponse(fixtures.ok()),
+            # run add vpc commands
+            FakeNcClientResponse(fixtures.ok()),
+            # save commands
             FakeNcClientResponse(fixtures.ok())
         ]
 
@@ -73,19 +248,24 @@ class TestCiscoDriver(unittest.TestCase):
 
         eventlet.spawn(self.driver.create, port).wait()
 
-        self.assertEqual(self.ncclient.command.call_count, 4)
-        remove_bindings_cmd = self._get_called_commands(0)
-        clear_port_cmd = self._get_called_commands(1)
-        create_port_cmd = self._get_called_commands(2)
-        save_cmd = self._get_called_commands(3)
+        self.assertEqual(self.ncclient.command.call_count, 6)
+        show_bindings_cmd = self._get_called_commands(0)
+        remove_bindings_cmd = self._get_called_commands(1)
+        clear_port_cmd = self._get_called_commands(2)
+        create_port_cmd = self._get_called_commands(3)
+        add_vpc_cmd = self._get_called_commands(4)
+        save_cmd = self._get_called_commands(5)
 
-        remove_bindings_expected = ['show running dhcp | egrep port-channel1$']
+        show_bindings_expected = ['show running dhcp | egrep port-channel1$']
 
-        clear_port_expected = [
+        remove_bindings_expected = [
             'configure terminal',
             'interface port-channel 1',
             ('no ip source binding 10.0.0.1 FFFF.FFFF.FFFF.FFFF '
-             'vlan 1 interface port-channel1'),
+             'vlan 1 interface port-channel1')
+        ]
+
+        clear_port_expected = [
             'configure terminal',
             'interface port-channel 1',
             'no ip verify source dhcp-snooping-vlan',
@@ -100,13 +280,6 @@ class TestCiscoDriver(unittest.TestCase):
         create_port_expected = [
             'configure terminal',
             'interface port-channel 1',
-            'description CUSThardware1-host',
-            'switchport mode trunk',
-            'switchport trunk allowed vlan 1',
-            'spanning-tree port type edge trunk',
-            'vpc 1',
-            'ip verify source dhcp-snooping-vlan',
-            'no shutdown',
 
             'configure terminal',
             ('ip source binding 10.0.0.2 ff:ff:ff:ff:ff:ff '
@@ -114,19 +287,112 @@ class TestCiscoDriver(unittest.TestCase):
 
             'configure terminal',
             'interface ethernet 1/1',
+            'channel-group 1 mode active',
+            'spanning-tree bpduguard enable',
+            'no lldp transmit',
+            'no cdp enable',
+            'no shutdown',
+
+            'configure terminal',
+            'interface port-channel 1',
             'description CUSThardware1-host',
             'switchport mode trunk',
             'switchport trunk allowed vlan 1',
             'spanning-tree port type edge trunk',
+            'ip verify source dhcp-snooping-vlan',
+            'switchport block unicast',
+            'no shutdown'
+        ]
+
+        add_vpc_expected = [
+            'configure terminal',
+            'interface port-channel 1',
+            'vpc 1'
+        ]
+
+        save_expected = ['copy running-config startup-config']
+
+        self.assertEqual(show_bindings_cmd, show_bindings_expected)
+        self.assertEqual(remove_bindings_cmd, remove_bindings_expected)
+        self.assertEqual(clear_port_cmd, clear_port_expected)
+        self.assertEqual(create_port_cmd, create_port_expected)
+        self.assertEqual(add_vpc_cmd, add_vpc_expected)
+        self.assertEqual(save_cmd, save_expected)
+
+    def test_create_access(self):
+
+        self.ncclient.command.side_effect = [
+            # list dhcp bindings to clear
+            FakeNcClientResponse(fixtures.show_dhcp(1)),
+            # run dhcp binding delete commands
+            FakeNcClientResponse(fixtures.ok()),
+            # run clear commands
+            FakeNcClientResponse(fixtures.ok()),
+            # run create commands
+            FakeNcClientResponse(fixtures.ok()),
+            # run save commands
+            FakeNcClientResponse(fixtures.ok()),
+        ]
+
+        port = base_driver.PortInfo(
+            switch_host='switch1.host.com',
+            switch_username='user1',
+            switch_password='pass',
+            interface='eth1/1',
+            hardware_id='hardware1',
+            vlan_id=1,
+            ip='10.0.0.2',
+            mac_address='ff:ff:ff:ff:ff:ff',
+            trunked=False)
+
+        eventlet.spawn(self.driver.create, port).wait()
+
+        self.assertEqual(self.ncclient.command.call_count, 5)
+        show_bindings_cmd = self._get_called_commands(0)
+        remove_bindings_cmd = self._get_called_commands(1)
+        clear_port_cmd = self._get_called_commands(2)
+        create_port_cmd = self._get_called_commands(3)
+        save_cmd = self._get_called_commands(4)
+
+        show_bindings_expected = ['show running dhcp | egrep port-channel1$']
+
+        remove_bindings_expected = [
+            'configure terminal',
+            'interface port-channel 1',
+            ('no ip source binding 10.0.0.1 FFFF.FFFF.FFFF.FFFF '
+             'vlan 1 interface port-channel1'),
+        ]
+
+        clear_port_expected = [
+            'configure terminal',
+            'interface port-channel 1',
+            'no ip verify source dhcp-snooping-vlan',
+            'no interface port-channel 1',
+            'configure terminal',
+            'default interface ethernet 1/1',
+            'configure terminal',
+            'interface ethernet 1/1',
+            'shutdown'
+        ]
+
+        create_port_expected = [
+            'configure terminal',
+            'interface ethernet 1/1',
+            'description CUSThardware1-host',
+            'switchport mode access',
+            'switchport access vlan 1',
+            'spanning-tree port type edge',
             'spanning-tree bpduguard enable',
-            'channel-group 1 mode active',
-            'no lldp transmit',
-            'no cdp enable',
+            'lldp transmit',
+            'cdp enable',
+            'ip verify source dhcp-snooping-vlan',
+            'no ip verify source dhcp-snooping-vlan',
             'no shutdown'
         ]
 
         save_expected = ['copy running-config startup-config']
 
+        self.assertEqual(show_bindings_cmd, show_bindings_expected)
         self.assertEqual(remove_bindings_cmd, remove_bindings_expected)
         self.assertEqual(clear_port_cmd, clear_port_expected)
         self.assertEqual(create_port_cmd, create_port_expected)
@@ -135,6 +401,8 @@ class TestCiscoDriver(unittest.TestCase):
     def test_attach(self):
         self.ncclient.command.side_effect = [
             # run attach commands
+            FakeNcClientResponse(fixtures.ok()),
+            # save commands
             FakeNcClientResponse(fixtures.ok())
         ]
 
@@ -158,10 +426,14 @@ class TestCiscoDriver(unittest.TestCase):
         attach_expected = [
             'configure terminal',
             'interface port-channel 1',
-            'switchport trunk allowed vlan add 1',
+
             'configure terminal',
             ('ip source binding 10.0.0.2 ff:ff:ff:ff:ff:ff '
-             'vlan 1 interface port-channel1')
+             'vlan 1 interface port-channel1'),
+
+            'configure terminal',
+            'interface port-channel 1',
+            'switchport trunk allowed vlan add 1',
         ]
 
         save_expected = ['copy running-config startup-config']
@@ -174,6 +446,8 @@ class TestCiscoDriver(unittest.TestCase):
             # run detach commands
             FakeNcClientResponse(fixtures.ok()),
             # run remove ip binding commands
+            FakeNcClientResponse(fixtures.ok()),
+            # save commands
             FakeNcClientResponse(fixtures.ok())
         ]
 
@@ -219,7 +493,11 @@ class TestCiscoDriver(unittest.TestCase):
         self.ncclient.command.side_effect = [
             # list dhcp bindings to clear
             FakeNcClientResponse(fixtures.show_dhcp(1)),
+            # run remove dhcp binding commands
+            FakeNcClientResponse(fixtures.ok()),
             # run clear commands
+            FakeNcClientResponse(fixtures.ok()),
+            # save commands
             FakeNcClientResponse(fixtures.ok())
         ]
 
@@ -236,18 +514,22 @@ class TestCiscoDriver(unittest.TestCase):
 
         eventlet.spawn(self.driver.delete, port).wait()
 
-        self.assertEqual(self.ncclient.command.call_count, 3)
-        remove_bindings_cmd = self._get_called_commands(0)
-        clear_port_cmd = self._get_called_commands(1)
-        save_cmd = self._get_called_commands(2)
+        self.assertEqual(self.ncclient.command.call_count, 4)
+        show_bindings_cmd = self._get_called_commands(0)
+        remove_bindings_cmd = self._get_called_commands(1)
+        clear_port_cmd = self._get_called_commands(2)
+        save_cmd = self._get_called_commands(3)
 
-        remove_bindings_expected = ['show running dhcp | egrep port-channel1$']
+        show_bindings_expected = ['show running dhcp | egrep port-channel1$']
 
-        clear_port_expected = [
+        remove_bindings_expected = [
             'configure terminal',
             'interface port-channel 1',
             ('no ip source binding 10.0.0.1 FFFF.FFFF.FFFF.FFFF '
-             'vlan 1 interface port-channel1'),
+             'vlan 1 interface port-channel1')
+        ]
+
+        clear_port_expected = [
             'configure terminal',
             'interface port-channel 1',
             'no ip verify source dhcp-snooping-vlan',
@@ -261,6 +543,7 @@ class TestCiscoDriver(unittest.TestCase):
 
         save_expected = ['copy running-config startup-config']
 
+        self.assertEqual(show_bindings_cmd, show_bindings_expected)
         self.assertEqual(remove_bindings_cmd, remove_bindings_expected)
         self.assertEqual(clear_port_cmd, clear_port_expected)
         self.assertEqual(save_cmd, save_expected)

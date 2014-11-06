@@ -113,38 +113,6 @@ class DriverManager(object):
 
         return info
 
-    def running_config(self, switch_port_id):
-        """Given a switch_port_id, look up and return relevant
-        configuration info from the underlying device.
-        """
-        # TODO(morgabra) db.get_switchport_by_id()
-        switch_ports = self._get_switchports_by_ids([switch_port_id])
-        if not switch_ports:
-            return {}
-        switch_port = switch_ports[0]
-
-        # get and return response from driver
-        # TODO(morgabra) standardize response?
-        port_info = self._make_port_info(switch_port)
-        driver = self._get_driver(switch_port)
-        return driver.running_config(port_info)
-
-    def interface_status(self, switch_port_id):
-        """Given a switch_port_id, look up and return relevant
-        status info from the underlying interface.
-        """
-        # TODO(morgabra) db.get_switchport_by_id()
-        switch_ports = self._get_switchports_by_ids([switch_port_id])
-        if not switch_ports:
-            return {}
-        switch_port = switch_ports[0]
-
-        # get and return response from driver
-        # TODO(morgabra) standardize response?
-        port_info = self._make_port_info(switch_port)
-        driver = self._get_driver(switch_port)
-        return driver.interface_status(port_info)
-
     def attach(self, neutron_port, neutron_network):
         """Realize a neutron port configuration on given physical ports.
 

@@ -128,7 +128,7 @@ def parse_interface_status(res):
     def _strip_ns(tag):
         return tag[len(ns):]
 
-    interfaces = list(root.iter(_add_ns('ROW_interface')))
+    interfaces = list(root.getiterator(_add_ns('ROW_interface')))
 
     if not interfaces:
         raise Exception("no interface data found")

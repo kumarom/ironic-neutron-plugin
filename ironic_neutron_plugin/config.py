@@ -29,9 +29,14 @@ ironic_opts = [
                default=2,
                help="Seconds to wait between retrying commands due to auth "
                     "failure"),
-    cfg.BoolOpt("use_port_security",
-                default=True,
-                help="Enable use of port security commands (true/false)."),
+    cfg.IntOpt("save_queue_max_age",
+               default=30,
+               help="Seconds to wait before processing switch config save "
+                    "commands"),
+    cfg.IntOpt("save_queue_get_wait",
+               default=5,
+               help="Seconds to wait between polling for new switch config "
+                    "save commands")
 ]
 
 cfg.CONF.register_opts(ironic_opts, "ironic")
