@@ -4,7 +4,7 @@ from Crypto.Hash import MD5
 import argparse
 import getpass
 
-from ironic_neutron_plugin.db import models
+from baremetal_neutron_extension.db import models
 
 
 def gen_key():
@@ -13,8 +13,10 @@ def gen_key():
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Utilites for managing encrypted switch credentials.')
-    parser.add_argument("command", help='Run command', choices=['gen_key', 'encrypt', 'decrypt'])
+    parser = argparse.ArgumentParser(
+        description='Utilites for managing encrypted switch credentials.')
+    parser.add_argument("command", help='Run command',
+                        choices=['gen_key', 'encrypt', 'decrypt'])
     parser.add_argument('--value', help='Value to encrypt/decrypt')
 
     parsed_args = parser.parse_args()

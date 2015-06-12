@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,8 +17,8 @@
 from neutron.api import extensions
 from neutron import wsgi
 
-from ironic_neutron_plugin.db import db
-from ironic_neutron_plugin import exceptions as exc
+from baremetal_neutron_extension.db import db
+from baremetal_neutron_extension import exceptions as exc
 
 from simplejson import scanner as json_scanner
 

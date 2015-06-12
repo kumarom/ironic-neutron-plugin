@@ -1,8 +1,8 @@
-ironic-neutron-plugin
+baremetal-neutron-extension
 =====================
 
-This is a (likely) extremely misguided attempt at a proof of concept neutron plugin that works with ironic
-(or really any bare-metal environment).
+This is a attempt at a proof of concept neutron ML2 Extension driver that works with ironic (or really any bare-metal environment).
+This is based on the work from Rackspace. The original rackspace Plugin has been refactored as an extension driver for ML2 plugin.
 
 Added features/extensions:
 
@@ -17,9 +17,7 @@ In short, instead of agents plugging virtual ports, we keep a map of physical sw
 Notes/Open Questions/TODO
 =========================
 
-1. We have to subclass the Ml2 plugin because there is no way to load extensions. (Even if there was, the request body isn't passed to the mechanism and the returned objects do not include extension fields.)
-2. If the above were fixed, we could push the switchport mapping and other extension logic into the mechanism, which would make this much easier to maintain.
-3. Alternatively, the features we need could be merged upstream in some capacity.
+1. Upstream in some capacity.
 
 Development
 ===========
@@ -27,22 +25,21 @@ Development
 Create a Virtualenv
 -------------------
 
-0. ```tox -e devenv```
-1. ```. devenv/bin/activate```
+1. ```tox -e devenv```
+2. ```. devenv/bin/activate```
 
 Create neutron.conf
 -------------------
 
-0. ```cp ./etc/neutron.conf.dist ./etc/neutron.conf```
+1. ```cp ./etc/neutron.conf.dist ./etc/neutron.conf```
 
 Edit neutron.conf
 -----------------
 
-At a minium, you'll need to change the following:
+At a minimum, you'll need to change the following:
 
 ```
 [DEFAULT]
-api_extensions_path = <absolute path to the extensions dir - ex: /path/to/ironic-neutron-plugin/ironic_neutron_plugin/extensions>
 log_dir = <absolute path to your log directory - ex: /path/to/ironic-neutron-plugin/logs>
 
 [database]
@@ -70,7 +67,7 @@ place the output in neutron.conf
 
 ```
 [ironic]
-credential_key = 5422035f085eae3129cd32955d6e92d7
+credential_secret = 5422035f085eae3129cd32955d6e92d7
 ```
 
 Run Neutron Server

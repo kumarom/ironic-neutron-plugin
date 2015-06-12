@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +20,9 @@ import mock
 import unittest
 import xml.etree.ElementTree as ET
 
-from ironic_neutron_plugin.drivers import base as base_driver
-from ironic_neutron_plugin.drivers.cisco import driver
-from ironic_neutron_plugin.tests.unit.drivers.cisco import fixtures
+from baremetal_neutron_extension.drivers import base as base_driver
+from baremetal_neutron_extension.drivers.cisco import driver
+from baremetal_neutron_extension.tests.unit.drivers.cisco import fixtures
 
 
 class FakeNcClientResponse(object):
@@ -84,7 +85,8 @@ class TestCiscoDriver(unittest.TestCase):
             FakeNcClientResponse(fixtures.ok())
         ]
 
-        self.driver = driver.CiscoDriver(save_queue_max_age=.01, save_queue_get_wait=0)
+        self.driver = driver.CiscoDriver(save_queue_max_age=.01,
+                                         save_queue_get_wait=0)
 
         port = base_driver.PortInfo(
             switch_host='switch1.host.com',

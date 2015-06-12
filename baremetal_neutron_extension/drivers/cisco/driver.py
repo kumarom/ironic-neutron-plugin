@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,17 +19,16 @@ Implements a Nexus-OS NETCONF over SSHv2 API Client.
 
 This is lifted partially from the cisco ml2 mechanism.
 """
-from ironic_neutron_plugin import config
-
 import eventlet
 
 from neutron.openstack.common import importutils
 from neutron.openstack.common import lockutils
 from neutron.openstack.common import log as logging
 
-from ironic_neutron_plugin.drivers import base as base_driver
-from ironic_neutron_plugin.drivers.cisco import commands
-from ironic_neutron_plugin.drivers.cisco import utils as cisco_utils
+from baremetal_neutron_extension import config
+from baremetal_neutron_extension.drivers import base as base_driver
+from baremetal_neutron_extension.drivers.cisco import commands
+from baremetal_neutron_extension.drivers.cisco import utils as cisco_utils
 
 import time
 
@@ -91,22 +91,25 @@ class CiscoDriver(base_driver.Driver):
                         start_time = time.time()
 
             # process save queue
-            LOG.info('Running config save on %s queued items.' % len(save_queue))
+            LOG.info('Running config save on %s queued items.'
+                     % len(save_queue))
             for port, attempt in save_queue.values():
                 attempt = attempt + 1
                 LOG.debug(('Starting config save on %s (attempt %d/3)' %
-                          (port.switch_host, attempt)))
+                           (port.switch_host, attempt)))
                 try:
                     self._save(port)
                     LOG.info(('Finished config save on %s (attempt %d/3)' %
-                               (port.switch_host, attempt)))
+                              (port.switch_host, attempt)))
                 except Exception as e:
                     if attempt >= 3:
                         LOG.error(('Failed config save on %s (attempt: %d/3) '
-                                   'Aborting, %s') % (port.switch_host, attempt, e))
+                                   'Aborting, %s') % (port.switch_host,
+                                                      attempt, e))
                     else:
                         LOG.debug(('Failed config save on %s (attempt: %d/3) '
-                                   'Retrying, %s') % (port.switch_host, attempt, e))
+                                   'Retrying, %s') % (port.switch_host,
+                                                      attempt, e))
                         self._save_queue.put((port, attempt))
 
                 eventlet.sleep(0)  # yield after each save
@@ -380,11 +383,11 @@ class CiscoDriver(base_driver.Driver):
 
         if not commands:
             LOG.debug("No commands to run - %(switch)s %(interface)s" %
-                     (port.switch_host, port.interface))
+                      (port.switch_host, port.interface))
             return
 
         LOG.debug("executing commands - %s %s: %s" %
-                 (port.switch_host, port.interface, commands))
+                  (port.switch_host, port.interface, commands))
 
         if self.dry_run:
             LOG.debug("Dry run is enabled - skipping")
@@ -399,7 +402,7 @@ class CiscoDriver(base_driver.Driver):
             return c.command(commands)
         except Exception as e:
             LOG.debug("Failed running commands - %s %s: %s" %
-                     (port.switch_host, port.interface, e))
+                      (port.switch_host, port.interface, e))
 
             if c:
                 self.connections[port.switch_host] = None

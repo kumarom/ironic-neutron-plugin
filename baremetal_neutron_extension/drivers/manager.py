@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,11 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ironic_neutron_plugin.db import db
-from ironic_neutron_plugin.db import models
+from baremetal_neutron_extension.db import db
+from baremetal_neutron_extension.db import models
 
-from ironic_neutron_plugin.drivers import base as base_driver
-from ironic_neutron_plugin.drivers.cisco import driver as cisco_driver
+from baremetal_neutron_extension.drivers import base as base_driver
+from baremetal_neutron_extension.drivers.cisco import driver as cisco_driver
 
 from neutron.openstack.common import log as logging
 

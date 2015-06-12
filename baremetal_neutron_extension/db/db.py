@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +19,7 @@ from sqlalchemy import orm
 from neutron.db import api as db_api
 from neutron.openstack.common import log as logging
 
-from ironic_neutron_plugin.db import models
+from baremetal_neutron_extension.db import models
 
 
 LOG = logging.getLogger(__name__)

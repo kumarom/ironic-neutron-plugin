@@ -2,8 +2,7 @@
 auth_strategy = noauth
 debug = True
 verbose = True
-core_plugin = ironic_neutron_plugin.plugin.IronicMl2Plugin
-api_extensions_path = /path/to/ironic-neutron-plugin/ironic_neutron_plugin/extensions
+core_plugin = neutron.plugins.ml2.plugin.Ml2Plugin
 fake_rabbit = True
 
 use_stderr = True
@@ -13,12 +12,16 @@ log_dir = /path/to/neutron/logs
 connection = mysql://root@127.0.0.1:3306/neutron
 
 [ml2]
-type_drivers = vlan
+type_drivers = local,flat,vlan
 tenant_network_types = vlan
-mechanism_drivers = ironic
+mechanism_drivers = openvswitch,ironic
+extension_drivers = ironic
+
+[ml2_type_flat]
+flat_networks = <physical_network_name>,<physical_network_name>
 
 [ml2_type_vlan]
-network_vlan_ranges = <physical_network_name>,<physical_network_name>
+network_vlan_ranges = <physical_network_name>[:<vlan_min>:<vlan_max>],..
 
 [quotas]
 quota_items = network,subnet,port

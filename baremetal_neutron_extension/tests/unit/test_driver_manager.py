@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ironic_neutron_plugin.tests import base
+from baremetal_neutron_extension.tests import base
 
 
 class TestIronicDriverManager(base.IronicMl2MechanismTestCase):

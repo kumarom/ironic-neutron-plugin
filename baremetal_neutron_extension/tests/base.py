@@ -1,4 +1,5 @@
 # Copyright (c) 2014 OpenStack Foundation.
+# (c) Copyright 2015 Hewlett-Packard Development Company, L.P.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,10 +21,10 @@ from neutron import context
 from neutron.plugins.ml2 import config as ml2_config
 from neutron.tests.unit import test_db_plugin
 
-from ironic_neutron_plugin import config as ironic_config
-from ironic_neutron_plugin.drivers import manager
-from ironic_neutron_plugin.extensions import switch as switch_extension
-from ironic_neutron_plugin import plugin
+from baremetal_neutron_extension import config as ironic_config
+from baremetal_neutron_extension.drivers import manager
+from baremetal_neutron_extension.extensions import switch as switch_extension
+from baremetal_neutron_extension import plugin
 
 import webob
 
@@ -32,7 +33,7 @@ ml2_config.cfg.CONF.import_opt('network_vlan_ranges',
                                'neutron.plugins.ml2.drivers.type_vlan',
                                group='ml2_type_vlan')
 
-ML2_PLUGIN = 'ironic_neutron_plugin.plugin.IronicMl2Plugin'
+ML2_PLUGIN = 'neutron.plugins.ml2.plugin.Ml2Plugin'
 
 
 def optional_ctx(obj, fallback):
@@ -51,7 +52,8 @@ class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
 
     fmt = 'json'
     _plugin_name = ML2_PLUGIN
-    _mechanism_drivers = ['ironic']
+    _mechanism_drivers = ['openvswitch', 'ironic']
+    _extension_drivers = ['ironic']
 
     # automatically create fixtures (net1, net2, subnet1, etc)
     _dummy_data = False
@@ -69,6 +71,9 @@ class IronicMl2MechanismTestCase(test_db_plugin.NeutronDbPluginV2TestCase):
                                          group='ml2')
         ml2_config.cfg.CONF.set_override('tenant_network_types',
                                          ['vlan'],
+                                         group='ml2')
+        ml2_config.cfg.CONF.set_override('extension_drivers',
+                                         self._extension_drivers,
                                          group='ml2')
 
         self.physnet = 'physnet1'
